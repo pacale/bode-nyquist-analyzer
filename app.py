@@ -70,21 +70,47 @@ class SystemInfo:
 # 1. PARSING
 # ═══════════════════════════════════════════════════════════════════════════
 
-def parse_transfer_function(expr_str: str) -> SystemInfo:
-    """Parsa una stringa G(s) e restituisce un oggetto *SystemInfo*.
+from sympy.parsing.sympy_parser import (
+    parse_expr,
+    standard_transformations,
+    implicit_multiplication_application,
+    convert_xor
+)
 
-    Solleva *ValueError* in caso di errore.
+TRANSFORMATIONS = (
+    standard_transformations +
+    (implicit_multiplication_application, convert_xor)
+)
+
+
+def parse_transfer_function(numeratore: str, denominatore: str) -> SystemInfo:
+    """
+    Parsa N(s) e D(s) in linguaggio umano naturale e restituisce SystemInfo.
+    Supporta:
+      - Moltiplicazione implicita:  2s  →  2*s
+      - Potenza con ^:              s^2  →  s**2
     """
     s = sympy.Symbol("s")
+    local_dict = {"s": s}
 
     try:
-        expr = sympy.sympify(expr_str, locals={"s": s})
-    except (sympy.SympifyError, SyntaxError, TypeError) as exc:
+        num_expr = parse_expr(
+            numeratore.strip() if numeratore.strip() else "1",
+            local_dict=local_dict,
+            transformations=TRANSFORMATIONS
+        )
+        den_expr = parse_expr(
+            denominatore.strip() if denominatore.strip() else "1",
+            local_dict=local_dict,
+            transformations=TRANSFORMATIONS
+        )
+    except Exception as exc:
         raise ValueError(
             f"Espressione non valida. Controlla la sintassi.\n"
             f"Dettaglio: {exc}"
         ) from exc
 
+    expr = num_expr / den_expr
     num_expr, den_expr = sympy.fraction(sympy.cancel(expr))
 
     try:
@@ -973,17 +999,98 @@ def main() -> None:
         def_den = "s**2 + 101*s + 100"
         f_key = "poly"
         
+    target_num_key = f"num_{f_key}"
+    target_den_key = f"den_{f_key}"
+    if target_num_key not in st.session_state: st.session_state[target_num_key] = def_num
+    if target_den_key not in st.session_state: st.session_state[target_den_key] = def_den
+
+    # ── Tastiera Visiva ───────────────────────────────────────────────────
+    st.markdown("**Inserimento rapido — clicca per aggiungere al campo attivo:**")
+    target = st.radio(
+        "Aggiungi a:",
+        ["Numeratore", "Denominatore"],
+        horizontal=True,
+        key="tastiera_target"
+    )
+
+    if "pending_token" not in st.session_state:
+        st.session_state.pending_token = None
+
+    def _add_token_str(token_str: str):
+        k = target_num_key if st.session_state.tastiera_target == "Numeratore" else target_den_key
+        if token_str == "CLEAR":
+            st.session_state[k] = ""
+        else:
+            st.session_state[k] = st.session_state[k] + token_str
+
+    def _handle_btn_click(token: str):
+        if "_" in token:
+            st.session_state.pending_token = token
+        else:
+            _add_token_str(token)
+            st.session_state.pending_token = None
+
+    cols = st.columns(8)
+    bottoni_riga1 = [
+        ("s",           "s"),
+        ("s²",          "s^2"),
+        ("s³",          "s^3"),
+        ("(s+a)",       "(s+_a)"),
+        ("(1+s/ω)",     "(1+s/_w)"),
+        ("(s²+2ζωs+ω²)","(s^2+2*_z*_w*s+_w^2)"),
+        ("1/s",         "1/s"),
+        ("K",           "_K"),
+    ]
+    for i, (label, token) in enumerate(bottoni_riga1):
+        if cols[i].button(label, key=f"btn1_{i}"):
+            _handle_btn_click(token)
+
+    cols2 = st.columns(8)
+    bottoni_riga2 = [
+        ("×",  "*"),
+        ("÷",  "/"),
+        ("(",  "("),
+        (")",  ")"),
+        ("+",  "+"),
+        ("−",  "-"),
+        ("^",  "^"),
+        ("🗑 Cancella", "CLEAR"),
+    ]
+    for i, (label, token) in enumerate(bottoni_riga2):
+        if cols2[i].button(label, key=f"btn2_{i}"):
+            _handle_btn_click(token)
+
+    if st.session_state.pending_token:
+        st.info(f"Configurazione parametro per inserimento rapido")
+        tok = st.session_state.pending_token
+        import re
+        placeholders = list(dict.fromkeys(re.findall(r"_([awzK])", tok)))
+        
+        p_cols = st.columns(len(placeholders))
+        vals = {}
+        for idx_p, p in enumerate(placeholders):
+            vals[p] = p_cols[idx_p].number_input(f"Valore di {p}", value=1.0, format="%f", key=f"input_{p}")
+        
+        if st.button("Conferma inserimento", type="primary"):
+            final_tok = tok
+            for p, v in vals.items():
+                v_str = f"{v:g}"
+                final_tok = final_tok.replace(f"_{p}", v_str)
+            _add_token_str(final_tok)
+            st.session_state.pending_token = None
+            st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
     num_str = st.text_input(
         "Numeratore N(s)",
-        value=def_num,
-        key=f"num_{f_key}",
+        key=target_num_key,
         help="Sintassi Python/SymPy: * per la moltiplicazione, ** per le potenze.",
     )
     st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
     den_str = st.text_input(
         "Denominatore D(s)",
-        value=def_den,
-        key=f"den_{f_key}",
+        key=target_den_key,
         help="Sintassi Python/SymPy. Lascia '1' per nessun denominatore.",
     )
 
@@ -1007,16 +1114,10 @@ def main() -> None:
         st.info("Inserisci una funzione di trasferimento e premi **Analizza**.")
         return
 
-    # Ricostruisci G(s)
-    if not den_str.strip() or den_str.strip() == "1":
-        g_string = f"({num_str})"
-    else:
-        g_string = f"({num_str})/({den_str})"
-
     # ── Parsing ───────────────────────────────────────────────────────────
     try:
         with st.spinner("Calcolo in corso..."):
-            info = parse_transfer_function(g_string)
+            info = parse_transfer_function(num_str, den_str)
     except (ValueError, Exception) as exc:
         st.error(f"⚠️ {exc}")
         return
