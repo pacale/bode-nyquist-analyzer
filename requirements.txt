@@ -4,4 +4,4 @@ latex2sympy2-extended>=1.9.0
 numpy>=1.24
 scipy>=1.10
 plotly>=5.18
-control>=0.924
+control==0.10.2
