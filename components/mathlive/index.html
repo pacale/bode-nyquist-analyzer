@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="https://unpkg.com/mathlive"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 4px;
+      background: transparent;
+      font-family: sans-serif;
+    }
+    .label {
+      font-size: 13px;
+      color: #aaa;
+      margin-bottom: 4px;
+    }
+    math-field {
+      width: 95%;
+      font-size: 22px;
+      border: 1.5px solid #555;
+      border-radius: 8px;
+      padding: 8px 12px;
+      background: #1e1e1e;
+      color: #ffffff;
+      --caret-color: #ff4b4b;
+      --selection-background-color: rgba(255,75,75,0.3);
+    }
+    math-field:focus-within {
+      border-color: #ff4b4b;
+      outline: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="label" class="label"></div>
+  <math-field id="mf"
+    virtual-keyboard-mode="manual"
+    smart-fence="true"
+    smart-superscript="true"
+  ></math-field>
+
+  <script>
+    const mf = document.getElementById("mf");
+    const labelDiv = document.getElementById("label");
+    let isInitialized = false;
+
+    // Send messages to Streamlit
+    function sendMessageToStreamlit(type, data) {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: "streamlit:" + type,
+        ...data
+      }, "*");
+    }
+
+    function setFrameHeight() {
+      // Usiamo una altezza fissa o dinamica
+      sendMessageToStreamlit("setFrameHeight", { height: document.body.scrollHeight + 10 });
+    }
+
+    function returnDataToStreamlit() {
+      sendMessageToStreamlit("setComponentValue", { value: mf.getValue("latex"), dataType: "json" });
+    }
+
+    // Handle messages from Streamlit
+    window.addEventListener("message", function(event) {
+      if (event.data.type === "streamlit:render") {
+        const args = event.data.args;
+        if (!isInitialized) {
+          labelDiv.innerText = args.label;
+          mf.setValue(args.default_latex, { suppressChangeNotifications: true });
+          isInitialized = true;
+          setFrameHeight();
+          returnDataToStreamlit();
+        }
+      }
+    });
+
+    // Notify Streamlit that we are ready
+    sendMessageToStreamlit("componentReady", { apiVersion: 1 });
+
+    mf.addEventListener("focus", () => {
+      window.mathVirtualKeyboard.show();
+      setFrameHeight(); // Tastiera potrebbe cambiare altezza
+    });
+
+    mf.addEventListener("input", () => {
+      returnDataToStreamlit();
+    });
+
+    window.mathVirtualKeyboard.layouts = [
+      "numeric",
+      "symbols",
+      "alphabetic",
+      {
+        label: "Controlli",
+        tooltip: "Fattori comuni per G(s)",
+        rows: [
+          [
+            { latex: "\\frac{\\placeholder{}}{\\placeholder{}}", insert: "\\frac{#0}{#?}", label: "<span><sup>□</sup>/<sub>□</sub></span>" },
+            { latex: "s",          insert: "s",             label: "s"    },
+            { latex: "s^2",        insert: "s^2",           label: "s²"   },
+            { latex: "s^{\\placeholder{}}",  insert: "s^{#?}",  label: "sⁿ"  },
+            { latex: "1+\\frac{s}{\\placeholder{}}", insert: "\\left(1+\\frac{s}{#?}\\right)", label: "1+s/ω" },
+            { latex: "s+\\placeholder{}",     insert: "(s+#?)",       label: "s+a"  },
+            { latex: "s^2+2\\placeholder{}\\placeholder{}s+\\placeholder{}^2", insert: "(s^2+2#?#?s+#?^2)", label: "s²+2ζωs+ω²" },
+            { latex: "\\frac{1}{s}", insert: "\\frac{1}{s}", label: "1/s"  },
+          ],
+          [
+            { latex: "\\frac{1}{s^2}", insert: "\\frac{1}{s^2}", label: "1/s²" },
+            { latex: "\\cdot",   insert: "\\cdot",      label: "·"    },
+            { latex: "(",          insert: "(",             label: "("    },
+            { latex: ")",          insert: ")",             label: ")"    },
+            { latex: "\\placeholder{}^{\\placeholder{}}", insert: "#0^{#?}", label: "xⁿ" },
+            { latex: "\\sqrt{\\placeholder{}}", insert: "\\sqrt{#?}", label: "√" },
+            { latex: "\\pi",     insert: "\\pi",        label: "π"    },
+            { latex: "j",          insert: "j",             label: "j"    },
+          ]
+        ]
+      }
+    ];
+
+    setInterval(setFrameHeight, 500); // Polling height for virtual keyboard
+  </script>
+</body>
+</html>

@@ -71,45 +71,70 @@ class SystemInfo:
 # ═══════════════════════════════════════════════════════════════════════════
 
 from sympy.parsing.sympy_parser import (
-    parse_expr,
-    standard_transformations,
-    implicit_multiplication_application,
-    convert_xor
+    parse_expr, standard_transformations,
+    implicit_multiplication_application, convert_xor
 )
+from latex2sympy2_extended import latex2sympy
+from sympy import symbols, Poly
 
 TRANSFORMATIONS = (
     standard_transformations +
     (implicit_multiplication_application, convert_xor)
 )
 
-
-def parse_transfer_function(numeratore: str, denominatore: str) -> SystemInfo:
+def _parse_single_expr(raw: str, s):
     """
-    Parsa N(s) e D(s) in linguaggio umano naturale e restituisce SystemInfo.
-    Supporta:
-      - Moltiplicazione implicita:  2s  →  2*s
-      - Potenza con ^:              s^2  →  s**2
+    Tenta il parsing con due strategie in cascata:
+    1. parse_expr con implicit_multiplication (per input naturale)
+    2. latex2sympy (per input LaTeX da copia-incolla o utenti avanzati)
+    Lancia ValueError se entrambi falliscono.
     """
-    s = sympy.Symbol("s")
-    local_dict = {"s": s}
+    raw = raw.strip()
+    if not raw:
+        raise ValueError("Il campo è vuoto.")
 
+    # Strategia 1: input naturale (2s, s^2, s*(1+s/10), ecc.)
     try:
-        num_expr = parse_expr(
-            numeratore.strip() if numeratore.strip() else "1",
-            local_dict=local_dict,
+        return parse_expr(
+            raw,
+            local_dict={"s": s},
             transformations=TRANSFORMATIONS
         )
-        den_expr = parse_expr(
-            denominatore.strip() if denominatore.strip() else "1",
-            local_dict=local_dict,
-            transformations=TRANSFORMATIONS
-        )
-    except Exception as exc:
-        raise ValueError(
-            f"Espressione non valida. Controlla la sintassi.\n"
-            f"Dettaglio: {exc}"
-        ) from exc
+    except Exception:
+        pass
 
+    # Strategia 2: LaTeX puro (\frac{s}{1+s}, s^{2}, ecc.)
+    try:
+        expr = latex2sympy(raw)
+        # Rimappa il simbolo al nostro s
+        free = expr.free_symbols
+        if free and s not in free:
+            expr = expr.subs(list(free)[0], s)
+        return expr
+    except Exception as e2:
+        raise ValueError(
+            f"Espressione non riconosciuta. "
+            f"Prova a scrivere in forma naturale (es: s*(s+1)) "
+            f"oppure in LaTeX (es: \\frac{{s}}{{s+1}}). "
+            f"Dettaglio tecnico: {e2}"
+        )
+
+def parse_transfer_function(latex_num: str, latex_den: str) -> SystemInfo:
+    s = symbols("s")
+    num_expr = _parse_single_expr(latex_num, s)
+    den_expr = _parse_single_expr(latex_den, s)
+    try:
+        num_poly = Poly(num_expr.expand(), s)
+        den_poly = Poly(den_expr.expand(), s)
+        num_coeffs = [float(c) for c in num_poly.all_coeffs()]
+        den_coeffs = [float(c) for c in den_poly.all_coeffs()]
+    except Exception as e:
+        raise ValueError(
+            f"Impossibile costruire la funzione di trasferimento. "
+            f"Verifica che il risultato sia un polinomio razionale in s. "
+            f"Dettaglio: {e}"
+        )
+        
     expr = num_expr / den_expr
     num_expr, den_expr = sympy.fraction(sympy.cancel(expr))
 
@@ -123,16 +148,6 @@ def parse_transfer_function(numeratore: str, denominatore: str) -> SystemInfo:
 
     zeros = [complex(z) for z in zeros_sym]
     poles = [complex(p) for p in poles_sym]
-
-    try:
-        num_poly = sympy.Poly(sympy.expand(num_expr), s)
-        den_poly = sympy.Poly(sympy.expand(den_expr), s)
-    except sympy.GeneratorsNeeded:
-        num_poly = sympy.Poly(sympy.expand(num_expr), s, domain="ZZ")
-        den_poly = sympy.Poly(sympy.expand(den_expr), s, domain="ZZ")
-
-    num_coeffs = [float(c) for c in num_poly.all_coeffs()]
-    den_coeffs = [float(c) for c in den_poly.all_coeffs()]
 
     order = den_poly.degree()
     system_type = sum(1 for p in poles if abs(p) < 1e-10)
@@ -878,70 +893,106 @@ def format_tf_forms(zeros: list[complex], poles: list[complex], K: float) -> dic
     }
 
 
-def _show_sidebar_info(info: SystemInfo) -> None:
+def _format_roots(roots: list[complex], st_container, label_prefix: str):
+    if not roots:
+        st_container.write("Nessuno")
+        return
+    
+    roots_sorted = sorted(roots, key=lambda r: r.real)
+    processed = set()
+    for i, r in enumerate(roots_sorted):
+        if i in processed:
+            continue
+            
+        if abs(r.imag) > 1e-10:
+            conj_index = -1
+            for j in range(i+1, len(roots_sorted)):
+                if j not in processed and abs(roots_sorted[j].real - r.real) < 1e-10 and abs(roots_sorted[j].imag + r.imag) < 1e-10:
+                    conj_index = j
+                    break
+            
+            if conj_index != -1:
+                processed.add(i)
+                processed.add(conj_index)
+                st_container.text_input(
+                    label=f"{label_prefix} {i+1}-{conj_index+1} (complessi coniugati)",
+                    value=f"{r.real:.4f} ± {abs(r.imag):.4f}j",
+                    disabled=True, key=f"{label_prefix}_{i}_{conj_index}"
+                )
+            else:
+                processed.add(i)
+                st_container.text_input(
+                    label=f"{label_prefix} {i+1}",
+                    value=f"{r.real:.4f}{r.imag:+.4f}j",
+                    disabled=True, key=f"{label_prefix}_{i}"
+                )
+        else:
+            processed.add(i)
+            val = r.real
+            if abs(val) < 1e-10:
+                st_container.metric(f"{label_prefix} {i+1}", "0 (origine)")
+            else:
+                st_container.metric(f"{label_prefix} {i+1}", f"{val:.4f}")
+
+def compute_stability_margins(sys_tf, omega: np.ndarray) -> dict:
+    import control
+    freq_resp = control.frequency_response(sys_tf, omega)
+    mag = np.abs(freq_resp.fresp.squeeze())
+    phase_deg = np.angle(freq_resp.fresp.squeeze(), deg=True)
+    mag_dB = 20 * np.log10(np.where(mag > 0, mag, 1e-12))
+
+    result = {
+        "omega_gc": [],
+        "omega_pc": [],
+        "GM_dB":    None,
+        "PM_deg":   None,
+        "stabile":  None,
+    }
+
+    for i in range(len(mag_dB) - 1):
+        if mag_dB[i] * mag_dB[i+1] <= 0:
+            ogc = float(np.interp(0, [mag_dB[i], mag_dB[i+1]],
+                                     [omega[i], omega[i+1]]))
+            result["omega_gc"].append(ogc)
+
+    phase_shifted = phase_deg + 180
+    for i in range(len(phase_shifted) - 1):
+        if phase_shifted[i] * phase_shifted[i+1] <= 0:
+            opc = float(np.interp(0, [phase_shifted[i], phase_shifted[i+1]],
+                                     [omega[i], omega[i+1]]))
+            result["omega_pc"].append(opc)
+
+    if result["omega_gc"]:
+        result["PM_deg"] = float(
+            np.interp(result["omega_gc"][0], omega, phase_deg)
+        ) + 180.0
+
+    if result["omega_pc"]:
+        result["GM_dB"] = -float(
+            np.interp(result["omega_pc"][0], omega, mag_dB)
+        )
+
+    gm_ok = result["GM_dB"] > 0 if result["GM_dB"] is not None else None
+    pm_ok = result["PM_deg"] > 0 if result["PM_deg"] is not None else None
+    if gm_ok is not None and pm_ok is not None:
+        result["stabile"] = gm_ok and pm_ok
+
+    return result
+
+
+def _show_sidebar_info(info: SystemInfo, omega: np.ndarray) -> None:
     """Visualizza le informazioni del sistema nella sidebar."""
     st.sidebar.header("📋 Informazioni Sistema")
 
-    # G(s) come frazione HTML
-    st.sidebar.subheader("G(s)")
-    num_str = _to_readable(info.num_expr)
-    den_str = _to_readable(info.den_expr)
-    st.sidebar.markdown(f"""
-    <div style="display:flex; flex-direction:column; align-items:center;
-                text-align:center; font-family:monospace; font-size:1.1rem;
-                margin:0.5rem 0 1rem 0;">
-        <span>{num_str}</span>
-        <hr style="width:90%; border:none; border-top:2px solid #555;
-                   margin:2px 0;" />
-        <span>{den_str}</span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Converti K da SymPy
-    try:
-        K_evans = float(info.num_coeffs[0] / info.den_coeffs[0]) if info.num_coeffs and info.den_coeffs else 1.0
-    except Exception:
-        K_evans = 1.0
-    
-    forms = format_tf_forms(info.zeros, info.poles, K_evans)
-    with st.sidebar.expander("Visualizza in tutte le forme"):
-        st.markdown("**Forma di Bode:**")
-        st.code(forms["bode"], language=None)
-        st.markdown("**Forma di Evans:**")
-        st.code(forms["evans"], language=None)
-        st.markdown("**Forma Polinomiale:**")
-        st.code(forms["poly"], language=None)
-    # SymPy normalizza automaticamente tutte le forme algebriche equivalenti
+    st.sidebar.caption(f"G(s) — ordine {int(info.order)}, tipo {int(info.system_type)}")
 
     # Zeri
     st.sidebar.subheader("Zeri")
-    if info.zeros:
-        for idx, z in enumerate(info.zeros, 1):
-            if abs(z.imag) > 1e-10:
-                st.sidebar.text_input(
-                    f"Zero {idx}",
-                    value=f"{z.real:.4f}{z.imag:+.4f}j",
-                    disabled=True, key=f"z_{idx}",
-                )
-            else:
-                st.sidebar.metric(f"Zero {idx}", f"{z.real:.4f}")
-    else:
-        st.sidebar.write("Nessuno")
+    _format_roots(info.zeros, st.sidebar, "Zero")
 
     # Poli
     st.sidebar.subheader("Poli")
-    if info.poles:
-        for idx, p in enumerate(info.poles, 1):
-            if abs(p.imag) > 1e-10:
-                st.sidebar.text_input(
-                    f"Polo {idx}",
-                    value=f"{p.real:.4f}{p.imag:+.4f}j",
-                    disabled=True, key=f"p_{idx}",
-                )
-            else:
-                st.sidebar.metric(f"Polo {idx}", f"{p.real:.4f}")
-    else:
-        st.sidebar.write("Nessuno")
+    _format_roots(info.poles, st.sidebar, "Polo")
 
     # Scalari
     st.sidebar.metric("Ordine del Sistema", int(info.order))
@@ -956,6 +1007,54 @@ def _show_sidebar_info(info: SystemInfo) -> None:
         st.sidebar.metric("Guadagno Statico K", "0")
     else:
         st.sidebar.metric("Guadagno Statico K", round(info.static_gain, 4))
+
+    margins = compute_stability_margins(info.tf, omega)
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📐 Stabilità")
+
+    if margins["GM_dB"] is not None:
+        st.sidebar.metric(
+            label="Margine di Guadagno",
+            value=f"{margins['GM_dB']:.2f} dB",
+            delta="stabile" if margins["GM_dB"] > 0 else "instabile",
+            delta_color="normal" if margins["GM_dB"] > 0 else "inverse"
+        )
+    else:
+        st.sidebar.metric("Margine di Guadagno", "∞")
+
+    if margins["PM_deg"] is not None:
+        st.sidebar.metric(
+            label="Margine di Fase",
+            value=f"{margins['PM_deg']:.2f}°",
+            delta="stabile" if margins["PM_deg"] > 0 else "instabile",
+            delta_color="normal" if margins["PM_deg"] > 0 else "inverse"
+        )
+    else:
+        st.sidebar.metric("Margine di Fase", "∞")
+
+    if margins["omega_gc"]:
+        for i, ogc in enumerate(margins["omega_gc"]):
+            label = "ω cross. guadagno" if len(margins["omega_gc"]) == 1 \
+                    else f"ω cross. guadagno {i+1}"
+            st.sidebar.metric(label=label, value=f"{ogc:.4f} rad/s")
+    else:
+        st.sidebar.metric("ω cross. guadagno", "—")
+
+    if margins["omega_pc"]:
+        for i, opc in enumerate(margins["omega_pc"]):
+            label = "ω cross. fase" if len(margins["omega_pc"]) == 1 \
+                    else f"ω cross. fase {i+1}"
+            st.sidebar.metric(label=label, value=f"{opc:.4f} rad/s")
+    else:
+        st.sidebar.metric("ω cross. fase", "—")
+
+    if margins["stabile"] is True:
+        st.sidebar.success("✅ Sistema stabile")
+    elif margins["stabile"] is False:
+        st.sidebar.error("❌ Sistema instabile")
+    else:
+        st.sidebar.warning("⚠️ Stabilità indeterminata")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -978,121 +1077,45 @@ def main() -> None:
     if "analyzed" not in st.session_state:
         st.session_state.analyzed = False
 
-    # ── Input a frazione visiva ───────────────────────────────────────────
-    forma = st.radio(
-        "Forma di inserimento",
-        options=["Forma di Bode  →  (1 + s/ω)", "Forma di Evans  →  (s + a)", "Forma Polinomiale  →  as² + bs + c"],
-        horizontal=True,
-        key="forma_inserimento"
+    from components.mathlive_input import mathlive_input
+
+    st.markdown("### Inserisci G(s)")
+    st.markdown(
+        "Scrivi le espressioni in forma naturale — "
+        "**non servono asterischi** tra coefficiente e variabile. "
+        "Esempi validi:"
     )
 
-    if "Bode" in forma:
-        def_num = "s*(1+s/10)"
-        def_den = "(1+s)*(1+s/100)"
-        f_key = "bode"
-    elif "Evans" in forma:
-        def_num = "s*(s+10)"
-        def_den = "(s+1)*(s+100)"
-        f_key = "evans"
-    else:
-        def_num = "s**2 + 10*s"
-        def_den = "s**2 + 101*s + 100"
-        f_key = "poly"
-        
-    target_num_key = f"num_{f_key}"
-    target_den_key = f"den_{f_key}"
-    if target_num_key not in st.session_state: st.session_state[target_num_key] = def_num
-    if target_den_key not in st.session_state: st.session_state[target_den_key] = def_den
+    # Esempi rapidi mostrati come codice inline
+    ex_col1, ex_col2, ex_col3 = st.columns(3)
+    with ex_col1:
+        st.code("s*(1+s/10)", language=None)
+        st.caption("Forma di Bode")
+    with ex_col2:
+        st.code("(s+2)^2", language=None)
+        st.caption("Forma di Evans")
+    with ex_col3:
+        st.code("\\frac{s+1}{s^2+3s+2}", language=None)
+        st.caption("LaTeX diretto")
 
-    # ── Tastiera Visiva ───────────────────────────────────────────────────
-    st.markdown("**Inserimento rapido — clicca per aggiungere al campo attivo:**")
-    target = st.radio(
-        "Aggiungi a:",
-        ["Numeratore", "Denominatore"],
-        horizontal=True,
-        key="tastiera_target"
-    )
+    st.divider()
 
-    if "pending_token" not in st.session_state:
-        st.session_state.pending_token = None
+    col_num, col_den = st.columns(2)
 
-    def _add_token_str(token_str: str):
-        k = target_num_key if st.session_state.tastiera_target == "Numeratore" else target_den_key
-        if token_str == "CLEAR":
-            st.session_state[k] = ""
-        else:
-            st.session_state[k] = st.session_state[k] + token_str
+    with col_num:
+        num_str = mathlive_input(
+            label="Numeratore N(s)",
+            default_value="s*(1+s/10)",
+            key="numeratore"
+        )
 
-    def _handle_btn_click(token: str):
-        if "_" in token:
-            st.session_state.pending_token = token
-        else:
-            _add_token_str(token)
-            st.session_state.pending_token = None
+    with col_den:
+        den_str = mathlive_input(
+            label="Denominatore D(s)",
+            default_value="(1+s)*(1+s/100)",
+            key="denominatore"
+        )
 
-    cols = st.columns(8)
-    bottoni_riga1 = [
-        ("s",           "s"),
-        ("s²",          "s^2"),
-        ("s³",          "s^3"),
-        ("(s+a)",       "(s+_a)"),
-        ("(1+s/ω)",     "(1+s/_w)"),
-        ("(s²+2ζωs+ω²)","(s^2+2*_z*_w*s+_w^2)"),
-        ("1/s",         "1/s"),
-        ("K",           "_K"),
-    ]
-    for i, (label, token) in enumerate(bottoni_riga1):
-        if cols[i].button(label, key=f"btn1_{i}"):
-            _handle_btn_click(token)
-
-    cols2 = st.columns(8)
-    bottoni_riga2 = [
-        ("×",  "*"),
-        ("÷",  "/"),
-        ("(",  "("),
-        (")",  ")"),
-        ("+",  "+"),
-        ("−",  "-"),
-        ("^",  "^"),
-        ("🗑 Cancella", "CLEAR"),
-    ]
-    for i, (label, token) in enumerate(bottoni_riga2):
-        if cols2[i].button(label, key=f"btn2_{i}"):
-            _handle_btn_click(token)
-
-    if st.session_state.pending_token:
-        st.info(f"Configurazione parametro per inserimento rapido")
-        tok = st.session_state.pending_token
-        import re
-        placeholders = list(dict.fromkeys(re.findall(r"_([awzK])", tok)))
-        
-        p_cols = st.columns(len(placeholders))
-        vals = {}
-        for idx_p, p in enumerate(placeholders):
-            vals[p] = p_cols[idx_p].number_input(f"Valore di {p}", value=1.0, format="%f", key=f"input_{p}")
-        
-        if st.button("Conferma inserimento", type="primary"):
-            final_tok = tok
-            for p, v in vals.items():
-                v_str = f"{v:g}"
-                final_tok = final_tok.replace(f"_{p}", v_str)
-            _add_token_str(final_tok)
-            st.session_state.pending_token = None
-            st.rerun()
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    num_str = st.text_input(
-        "Numeratore N(s)",
-        key=target_num_key,
-        help="Sintassi Python/SymPy: * per la moltiplicazione, ** per le potenze.",
-    )
-    st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
-    den_str = st.text_input(
-        "Denominatore D(s)",
-        key=target_den_key,
-        help="Sintassi Python/SymPy. Lascia '1' per nessun denominatore.",
-    )
 
     # Toggle unità fase (persiste nello stato)
     phase_unit = st.radio(
@@ -1122,12 +1145,12 @@ def main() -> None:
         st.error(f"⚠️ {exc}")
         return
 
-    _show_sidebar_info(info)
-
     # ── Risposta in frequenza ─────────────────────────────────────────────
     omega = _compute_omega_range(info, n_points=500)
     # Nyquist usa 1000 punti
     omega_ny = _compute_omega_range(info, n_points=1000)
+
+    _show_sidebar_info(info, omega)
 
     try:
         with st.spinner("Calcolo in corso..."):
@@ -1156,6 +1179,18 @@ def main() -> None:
         st.session_state.omega_query_result = None
 
     query_pt = st.session_state.omega_query_result
+
+    # ── Formula Analitica G(s) ────────────────────────────────────────────
+    st.markdown("---")
+    from sympy import latex
+    
+    col_formula, col_info = st.columns([3, 1])
+    with col_formula:
+        st.markdown("**G(s) analizzata:**")
+        st.latex(r"G(s) = " + latex(info.num_expr / info.den_expr))
+    with col_info:
+        st.metric("Ordine", int(info.order))
+        st.metric("Tipo", int(info.system_type))
 
     # ── Diagramma di Bode ─────────────────────────────────────────────────
     st.subheader("Diagramma di Bode")
