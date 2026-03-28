@@ -16,6 +16,7 @@ from typing import Optional
 
 import control as ctrl  # type: ignore
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go  # type: ignore
 import streamlit as st
 import sympy
@@ -40,6 +41,7 @@ _APPROX_COLOR = "#ff7f0e"
 _EXACT_WIDTH = 2.0
 _APPROX_WIDTH = 1.5
 _CURSOR_COLOR = "red"
+_QUERY_COLOR = "green"
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +503,8 @@ def plot_bode(
         row=1, col=1,
     )
 
+
+
     # ── Layout ────────────────────────────────────────────────────────────
     fig.update_layout(
         height=750,
@@ -645,6 +649,103 @@ def render_cursor_metrics(
         c3.metric("∠G(jω)", f"{phase_deg:.2f}°")
 
     c4.metric("G(jω)", f"{resp_exact.real:.4f} {resp_exact.imag:+.4f}j")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 7b. INTERROGAZIONE PUNTUALE — funzione di calcolo
+# ═══════════════════════════════════════════════════════════════════════════
+
+def query_single_frequency(
+    omega: float,
+    info: SystemInfo,
+    omega_min: float,
+    omega_max: float,
+) -> dict:
+    """Calcola le grandezze esatte e approssimate a una singola frequenza.
+
+    Restituisce un dizionario con tutte le grandezze richieste.
+    """
+    # Esatto via python-control
+    g_exact = info.tf(1j * omega)
+    mag_exact = abs(g_exact)
+    mag_exact_dB = 20.0 * np.log10(max(mag_exact, 1e-30))
+    phase_exact_deg = float(np.degrees(np.angle(g_exact)))
+    phase_exact_pi = phase_exact_deg / 180.0
+
+    # Approssimato: calcola il Bode approssimato sull'intero range e poi
+    # interpola al punto desiderato.  Questo garantisce l'ancoraggio
+    # corretto del guadagno alla prima frequenza del range (come nel
+    # diagramma disegnato).
+    omega_full = _compute_omega_range(info, n_points=500)
+    approx_mag_full, approx_phase_full = compute_asymptotic_bode(
+        omega_full, info,
+    )
+    mag_approx_dB = float(np.interp(
+        np.log10(omega), np.log10(omega_full), approx_mag_full,
+    ))
+    phase_approx_deg = float(np.interp(
+        np.log10(omega), np.log10(omega_full), approx_phase_full,
+    ))
+    mag_approx = 10.0 ** (mag_approx_dB / 20.0)
+    phase_approx_pi = phase_approx_deg / 180.0
+    # Ricostruisci il fasore approssimato
+    g_approx = mag_approx * (
+        np.cos(np.deg2rad(phase_approx_deg))
+        + 1j * np.sin(np.deg2rad(phase_approx_deg))
+    )
+
+    return {
+        "omega": omega,
+        "omega_min": omega_min,
+        "omega_max": omega_max,
+        "in_range": omega_min <= omega <= omega_max,
+        # Esatto
+        "g_exact": g_exact,
+        "mag_exact": mag_exact,
+        "mag_exact_dB": mag_exact_dB,
+        "phase_exact_deg": phase_exact_deg,
+        "phase_exact_pi": phase_exact_pi,
+        # Approssimato
+        "g_approx": g_approx,
+        "mag_approx": mag_approx,
+        "mag_approx_dB": mag_approx_dB,
+        "phase_approx_deg": phase_approx_deg,
+        "phase_approx_pi": phase_approx_pi,
+        # Scarti
+        "delta_mag_dB": abs(mag_exact_dB - mag_approx_dB),
+        "delta_phase_deg": abs(phase_exact_deg - phase_approx_deg),
+        "delta_phase_pi": abs(phase_exact_pi - phase_approx_pi),
+    }
+
+
+def _render_query_table(res: dict) -> None:
+    """Renderizza la tabella di confronto esatta/approssimata (semplificata)."""
+    import pandas as pd
+    
+    mag_exact_dB = res["mag_exact_dB"]
+    mag_approx_dB = res["mag_approx_dB"]
+    
+    if st.session_state.phase_unit == "Radianti (π)":
+        ph_exact = f"{res['phase_exact_deg'] / 180.0:.4f}π rad"
+        ph_approx = f"{res['phase_approx_deg'] / 180.0:.4f}π rad"
+    else:
+        ph_exact = f"{res['phase_exact_deg']:.4f}°"
+        ph_approx = f"{res['phase_approx_deg']:.4f}°"
+
+    rows = [
+        {
+            "Grandezza": "Modulo",
+            "Curva Esatta": f"{mag_exact_dB:.4f} dB",
+            "Curva Approssimata": f"{mag_approx_dB:.4f} dB",
+        },
+        {
+            "Grandezza": "Fase",
+            "Curva Esatta": ph_exact,
+            "Curva Approssimata": ph_approx,
+        }
+    ]
+    df = pd.DataFrame(rows)
+    st.table(df.set_index("Grandezza"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -820,7 +921,17 @@ def main() -> None:
         st.error(f"⚠️ Errore di calcolo: {exc}")
         return
 
-    # ── Cursore frequenza (slider) ────────────────────────────────────────
+    # ── Determina omega_min / omega_max dal vettore ────────────────────────
+    omega_min_val = float(omega[0])
+    omega_max_val = float(omega[-1])
+
+    # ── Recupera risultato query precedente (session_state) ───────────────
+    if "omega_query_result" not in st.session_state:
+        st.session_state.omega_query_result = None
+
+    query_pt = st.session_state.omega_query_result
+
+    # ── Diagramma di Bode ─────────────────────────────────────────────────
     st.subheader("Diagramma di Bode")
     bode_fig = plot_bode(
         omega, mag_db, phase_deg,
@@ -830,16 +941,62 @@ def main() -> None:
     )
     st.plotly_chart(bode_fig, use_container_width=True)
 
-    st.subheader("Diagramma Polare (Nyquist)")
-    cursor_resp_ny = None
-    if st.session_state.cursor_omega is not None:
-        cursor_resp_ny = info.tf(1j * st.session_state.cursor_omega)
-    nyquist_fig = plot_nyquist(
-        omega_ny, resp_ny, approx_resp_ny,
-        cursor_omega=st.session_state.cursor_omega,
-        cursor_resp=cursor_resp_ny,
-    )
-    st.plotly_chart(nyquist_fig, use_container_width=True)
+    # ══════════════════════════════════════════════════════════════════════
+    # INTERROGAZIONE PUNTUALE (dopo Bode, prima del cursore slider)
+    # ══════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("🔎 Interrogazione Puntuale")
+
+    qcol1, qcol2, qcol3 = st.columns([2, 1, 1])
+    with qcol1:
+        omega_input = st.number_input(
+            label="Inserisci una frequenza ω [rad/s]",
+            min_value=0.0,
+            value=None,
+            step=None,
+            format="%f",
+            placeholder="es. 0.1",
+            key="omega_query",
+        )
+    with qcol2:
+        omega_unit = st.selectbox(
+            label="Unità inserimento",
+            options=["rad/s", "Hz"],
+            key="omega_query_unit",
+        )
+    with qcol3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        btn_query = st.button("Calcola punto", key="btn_query")
+
+    if btn_query and omega_input is not None:
+        # Conversione Hz → rad/s se necessario
+        if omega_unit == "Hz":
+            omega_q = omega_input * 2.0 * np.pi
+        else:
+            omega_q = omega_input
+
+        if omega_q <= 0:
+            st.warning("La frequenza deve essere un valore positivo.")
+        else:
+            if omega_q < omega_min_val or omega_q > omega_max_val:
+                st.warning(
+                    f"Frequenza fuori dal range calcolato "
+                    f"[{omega_min_val:.4f}, {omega_max_val:.4f}] rad/s. "
+                    f"Il valore verrà comunque calcolato ma potrebbe "
+                    f"non essere significativo."
+                )
+            res = query_single_frequency(
+                omega_q, info, omega_min_val, omega_max_val,
+            )
+            st.session_state.omega_query_result = res
+
+    # Mostra tabella risultati se presente in session_state
+    if st.session_state.omega_query_result is not None:
+        res = st.session_state.omega_query_result
+        st.markdown(
+            f"#### Risultati per ω = {res['omega']:.6f} rad/s"
+        )
+        _render_query_table(res)
 
     # ── Slider cursore ────────────────────────────────────────────────────
     st.markdown("---")
@@ -862,6 +1019,19 @@ def main() -> None:
     wc = omega_cursor
     resp_at_wc = info.tf(1j * wc)
     render_cursor_metrics(wc, resp_at_wc, phase_in_radians)
+
+    # ── Diagramma Polare / Nyquist ────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("Diagramma Polare (Nyquist)")
+    cursor_resp_ny = None
+    if st.session_state.cursor_omega is not None:
+        cursor_resp_ny = info.tf(1j * st.session_state.cursor_omega)
+    nyquist_fig = plot_nyquist(
+        omega_ny, resp_ny, approx_resp_ny,
+        cursor_omega=st.session_state.cursor_omega,
+        cursor_resp=cursor_resp_ny,
+    )
+    st.plotly_chart(nyquist_fig, use_container_width=True)
 
 
 # ---------------------------------------------------------------------------
