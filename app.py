@@ -361,6 +361,45 @@ def plot_bode(
         legendgroup="approx", showlegend=True,
     ), row=1, col=1)
 
+    # ── Intercetta sinistra ───────────────────────────────────────────────
+    omega_min = omega[0]
+    val_esatta = mag_db[0]
+    val_approx = approx_mag_db[0]
+    
+    fig.add_annotation(
+        x=np.log10(omega_min),
+        y=val_esatta,
+        xref="x", yref="y1",
+        text=f"<b>{val_esatta:.2f} dB</b>",
+        showarrow=True, arrowhead=2, arrowcolor=_EXACT_COLOR,
+        ax=-50, ay=0,
+        font=dict(color=_EXACT_COLOR, size=12),
+        bgcolor="white", bordercolor=_EXACT_COLOR, borderwidth=1, borderpad=4,
+        xanchor="right"
+    )
+    fig.add_trace(go.Scatter(
+        x=[omega_min], y=[val_esatta], mode="markers",
+        marker=dict(symbol="circle", size=8, color=_EXACT_COLOR),
+        name="Intercetta sinistra (esatta)", showlegend=False
+    ), row=1, col=1)
+
+    fig.add_annotation(
+        x=np.log10(omega_min),
+        y=val_approx,
+        xref="x", yref="y1",
+        text=f"<b>{val_approx:.2f} dB</b>",
+        showarrow=True, arrowhead=2, arrowcolor=_APPROX_COLOR,
+        ax=-50, ay=20,
+        font=dict(color=_APPROX_COLOR, size=12),
+        bgcolor="white", bordercolor=_APPROX_COLOR, borderwidth=1, borderpad=4,
+        xanchor="right"
+    )
+    fig.add_trace(go.Scatter(
+        x=[omega_min], y=[val_approx], mode="markers",
+        marker=dict(symbol="circle", size=8, color=_APPROX_COLOR),
+        name="Intercetta sinistra (appross.)", showlegend=False
+    ), row=1, col=1)
+
     # ── Fase ──────────────────────────────────────────────────────────────
     if phase_in_radians:
         exact_phase_plot = phase_deg / 180.0
@@ -765,6 +804,54 @@ def _to_readable(expr: sympy.Expr) -> str:
     return text
 
 
+def format_tf_forms(zeros: list[complex], poles: list[complex], K: float) -> dict[str, str]:
+    """Genera le tre forme standard della funzione di trasferimento."""
+    import sympy
+    s = sympy.Symbol('s')
+    
+    def _fmt(r: complex, form: str) -> str:
+        if abs(r) < 1e-10:
+            return "s"
+        if abs(r.imag) < 1e-10:
+            a = r.real
+            if form == "evans":
+                return f"(s {'+' if a <= 0 else '-'} {abs(a):.4g})"
+            else:
+                return f"(1 {'+' if a <= 0 else '-'} s/{abs(a):.4g})"
+        else:
+            r_str = f"{r.real:.4g}{r.imag:+.4g}j"
+            if form == "evans":
+                return f"(s - ({r_str}))"
+            else:
+                return f"(1 - s/({r_str}))"
+
+    num_evans = " · ".join([_fmt(z, "evans") for z in zeros]) or "1"
+    den_evans = " · ".join([_fmt(p, "evans") for p in poles]) or "1"
+    
+    K_bode = complex(K)
+    for z in zeros:
+        if abs(z) > 1e-10: K_bode *= (-z)
+    for p in poles:
+        if abs(p) > 1e-10: K_bode /= (-p)
+        
+    K_str = f"{K:.4g}" if abs(K.imag) < 1e-10 else f"({K.real:.4g}{K.imag:+.4g}j)"
+    Kb_str = f"{K_bode.real:.4g}" if abs(K_bode.imag) < 1e-10 else f"({K_bode.real:.4g}{K_bode.imag:+.4g}j)"
+    
+    num_bode = " · ".join([_fmt(z, "bode") for z in zeros]) or "1"
+    den_bode = " · ".join([_fmt(p, "bode") for p in poles]) or "1"
+    
+    n_expr = sympy.sympify(K)
+    for z in zeros: n_expr *= (s - z)
+    d_expr = sympy.sympify(1.0)
+    for p in poles: d_expr *= (s - p)
+    
+    return {
+        "bode": f"{Kb_str} · ({num_bode}) / ({den_bode})" if num_bode != "1" else f"{Kb_str} / ({den_bode})",
+        "evans": f"{K_str} · ({num_evans}) / ({den_evans})" if num_evans != "1" else f"{K_str} / ({den_evans})",
+        "poly": f"({_to_readable(n_expr)}) / ({_to_readable(d_expr)})"
+    }
+
+
 def _show_sidebar_info(info: SystemInfo) -> None:
     """Visualizza le informazioni del sistema nella sidebar."""
     st.sidebar.header("📋 Informazioni Sistema")
@@ -783,6 +870,22 @@ def _show_sidebar_info(info: SystemInfo) -> None:
         <span>{den_str}</span>
     </div>
     """, unsafe_allow_html=True)
+
+    # Converti K da SymPy
+    try:
+        K_evans = float(info.num_coeffs[0] / info.den_coeffs[0]) if info.num_coeffs and info.den_coeffs else 1.0
+    except Exception:
+        K_evans = 1.0
+    
+    forms = format_tf_forms(info.zeros, info.poles, K_evans)
+    with st.sidebar.expander("Visualizza in tutte le forme"):
+        st.markdown("**Forma di Bode:**")
+        st.code(forms["bode"], language=None)
+        st.markdown("**Forma di Evans:**")
+        st.code(forms["evans"], language=None)
+        st.markdown("**Forma Polinomiale:**")
+        st.code(forms["poly"], language=None)
+    # SymPy normalizza automaticamente tutte le forme algebriche equivalenti
 
     # Zeri
     st.sidebar.subheader("Zeri")
@@ -850,15 +953,37 @@ def main() -> None:
         st.session_state.analyzed = False
 
     # ── Input a frazione visiva ───────────────────────────────────────────
+    forma = st.radio(
+        "Forma di inserimento",
+        options=["Forma di Bode  →  (1 + s/ω)", "Forma di Evans  →  (s + a)", "Forma Polinomiale  →  as² + bs + c"],
+        horizontal=True,
+        key="forma_inserimento"
+    )
+
+    if "Bode" in forma:
+        def_num = "s*(1+s/10)"
+        def_den = "(1+s)*(1+s/100)"
+        f_key = "bode"
+    elif "Evans" in forma:
+        def_num = "s*(s+10)"
+        def_den = "(s+1)*(s+100)"
+        f_key = "evans"
+    else:
+        def_num = "s**2 + 10*s"
+        def_den = "s**2 + 101*s + 100"
+        f_key = "poly"
+        
     num_str = st.text_input(
         "Numeratore N(s)",
-        value="s*(1+s/10)",
+        value=def_num,
+        key=f"num_{f_key}",
         help="Sintassi Python/SymPy: * per la moltiplicazione, ** per le potenze.",
     )
     st.markdown("<hr style='margin:4px 0'>", unsafe_allow_html=True)
     den_str = st.text_input(
         "Denominatore D(s)",
-        value="(1+s)*(1+s/100)",
+        value=def_den,
+        key=f"den_{f_key}",
         help="Sintassi Python/SymPy. Lascia '1' per nessun denominatore.",
     )
 
