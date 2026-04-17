@@ -118,16 +118,152 @@ hr { border-color: #2a2a3e !important; }
 
 _LIGHT_CSS = """
 <style>
-html, body, .stApp, [data-testid="stAppViewContainer"],
-[data-testid="block-container"], .main .block-container {
-    background-color: #f5f6fa !important;
+/* === ROOT E BODY === */
+html, body,
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewBlockContainer"],
+[data-testid="block-container"],
+.main,
+.main .block-container {
+    background-color: #f7f8fc !important;
     color: #1a1a2e !important;
 }
-header[data-testid="stHeader"] { background-color: #f5f6fa !important; }
+
+/* === HEADER === */
+header[data-testid="stHeader"],
+header[data-testid="stHeader"] * {
+    background-color: #f7f8fc !important;
+    color: #1a1a2e !important;
+}
+
+/* === SIDEBAR === */
 section[data-testid="stSidebar"],
 section[data-testid="stSidebar"] > div:first-child {
-    background-color: #e8eaf6 !important;
-    border-right: 1px solid #c5cae9 !important;
+    background-color: #eef0f8 !important;
+    border-right: 1px solid #d0d4e8 !important;
+}
+
+/* Testo sidebar — TUTTI i livelli */
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] div,
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] small,
+section[data-testid="stSidebar"] * {
+    color: #1a1a2e !important;
+}
+
+/* === METRIC (numeri grandi nella sidebar) === */
+[data-testid="stMetricValue"] {
+    color: #1a3a6e !important;
+    font-weight: 700 !important;
+}
+[data-testid="stMetricLabel"] {
+    color: #444466 !important;
+    font-size: 0.78rem !important;
+}
+[data-testid="stMetricDelta"] {
+    color: #2a6a2a !important;
+}
+
+/* === INPUT FIELDS — sovrascrivi dark mode residua === */
+.stTextInput input,
+.stTextInput textarea,
+[data-testid="stTextInput"] input,
+[data-testid="stTextInput"] textarea,
+[data-testid="stNumberInput"] input,
+div[data-baseweb="input"] input,
+div[data-baseweb="textarea"] textarea {
+    background-color: #ffffff !important;
+    color: #1a1a2e !important;
+    border: 1px solid #c0c4d8 !important;
+    border-radius: 8px !important;
+}
+.stTextInput input:focus,
+[data-testid="stTextInput"] input:focus {
+    border-color: #4d6cc0 !important;
+    box-shadow: 0 0 0 2px rgba(77, 108, 192, 0.2) !important;
+    background-color: #ffffff !important;
+}
+
+/* Box esempi (i tre box neri degli esempi di input) */
+div[data-testid="stMarkdownContainer"] code,
+.stCode, pre, code {
+    background-color: #1a1a2e !important;
+    color: #e8e8f8 !important;
+    border-radius: 6px !important;
+}
+
+/* === SELECT/DROPDOWN === */
+div[data-baseweb="select"] *,
+.stSelectbox * {
+    background-color: #ffffff !important;
+    color: #1a1a2e !important;
+}
+
+/* === PULSANTE ANALIZZA === */
+.stButton > button {
+    background-color: #e05252 !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+}
+.stButton > button:hover {
+    background-color: #c04040 !important;
+}
+
+/* === TESTO PRINCIPALE === */
+p, h1, h2, h3, h4, li {
+    color: #1a1a2e !important;
+}
+.stMarkdown p, .stMarkdown span {
+    color: #1a1a2e !important;
+}
+
+/* === CAPTION / TESTO SECONDARIO === */
+.stCaption, small, [data-testid="stCaptionContainer"] {
+    color: #555577 !important;
+}
+
+/* === DIVIDERS === */
+hr {
+    border-color: #d0d4e8 !important;
+}
+
+/* === TOGGLE LABEL === */
+[data-testid="stToggle"] label,
+[data-testid="stToggle"] span {
+    color: #1a1a2e !important;
+}
+
+/* === RADIO BUTTON LABEL === */
+[data-testid="stRadio"] label,
+[data-testid="stRadio"] span {
+    color: #1a1a2e !important;
+}
+
+/* === ALERT/WARNING BOX === */
+[data-testid="stAlert"] {
+    background-color: #fff3cd !important;
+    color: #664d03 !important;
+    border-left: 4px solid #ffc107 !important;
+}
+
+/* === CONTENITORE GRAFICI === */
+.stPlotlyChart, [data-testid="stPlotlyChart"] {
+    background-color: #ffffff !important;
+    border-radius: 10px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+}
+
+/* === SLIDER === */
+[data-testid="stSlider"] * {
+    color: #1a1a2e !important;
 }
 </style>
 """
