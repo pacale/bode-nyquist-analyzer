@@ -113,6 +113,13 @@ section[data-testid="stSidebar"] div {
 /* === TESTO === */
 p, h1, h2, h3, h4, label, .stMarkdown, .stCaption { color: #c8c8d8 !important; }
 hr { border-color: #2a2a3e !important; }
+
+/* === ALERT/WARNING BOX === */
+[data-testid="stAlert"], div[role="alert"], .stAlert {
+    background-color: #1e2040 !important;
+    color: #c8c8e8 !important;
+    border-left: 4px solid #5c6bc0 !important;
+}
 </style>
 """
 
@@ -193,8 +200,9 @@ div[data-baseweb="textarea"] textarea {
 /* Box esempi (i tre box neri degli esempi di input) */
 div[data-testid="stMarkdownContainer"] code,
 .stCode, pre, code {
-    background-color: #1a1a2e !important;
-    color: #e8e8f8 !important;
+    background-color: #2d2d3f !important;
+    color: #f0f0f8 !important;
+    border: 1px solid #3a3a50 !important;
     border-radius: 6px !important;
 }
 
@@ -246,12 +254,18 @@ hr {
 [data-testid="stRadio"] span {
     color: #1a1a2e !important;
 }
+[data-testid="stRadio"] div[role="radiogroup"] label span {
+    color: #555577 !important;
+}
+[data-testid="stRadio"] div[role="radiogroup"] label div {
+    border-color: #9090aa !important;
+}
 
 /* === ALERT/WARNING BOX === */
-[data-testid="stAlert"] {
-    background-color: #fff3cd !important;
-    color: #664d03 !important;
-    border-left: 4px solid #ffc107 !important;
+[data-testid="stAlert"], div[role="alert"], .stAlert {
+    background-color: #e8eaf6 !important;
+    color: #1a1a2e !important;
+    border-left: 4px solid #5c6bc0 !important;
 }
 
 /* === CONTENITORE GRAFICI === */
