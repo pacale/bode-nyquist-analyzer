@@ -197,12 +197,22 @@ div[data-baseweb="textarea"] textarea {
     background-color: #ffffff !important;
 }
 
-/* Box esempi (i tre box neri degli esempi di input) */
-div[data-testid="stMarkdownContainer"] code,
-.stCode, pre, code {
-    background-color: #2d2d3f !important;
-    color: #f0f0f8 !important;
-    border: 1px solid #3a3a50 !important;
+/* === BOX ESEMPI FORMA (copertura completa e forzata) === */
+.stApp div[data-testid="stMarkdownContainer"] code,
+.stApp .stCode, 
+.stApp pre, 
+.stApp code,
+.stApp [data-testid="stCode"],
+.stApp [data-testid="stCode"] pre,
+.stApp [data-testid="stCode"] code,
+.stApp div[data-testid="stCode"] > div,
+.stApp input:disabled,
+.stApp [data-testid="stTextInput"] input:disabled,
+.stApp div[data-baseweb="input"] input[disabled],
+.stApp div[data-baseweb="input"] input[readonly] {
+    background-color: #e8eaf0 !important;
+    color: #2a2a4a !important;
+    border: 1px solid #c8cae0 !important;
     border-radius: 6px !important;
 }
 
