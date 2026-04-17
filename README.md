@@ -1,66 +1,85 @@
 # 📈 Analizzatore Interattivo Bode & Nyquist
 
-Un'applicazione avanzata sviluppata con **Streamlit**, **SymPy** e **python-control** per l'esplorazione e l'analisi interattiva delle funzioni di trasferimento $G(s)$ nel dominio della frequenza. 
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white) 
+![Streamlit](https://img.shields.io/badge/Streamlit-1.30%2B-FF4B4B?logo=streamlit&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-Questo strumento didattico e professionale confronta le risposte esatte in frequenza con le approssimazioni asintotiche (metodo di Basile & Chiacchio), consentendo un'analisi profonda dei margini di stabilità e del comportamento del sistema in anello aperto e chiuso.
-
-## 🚀 Funzionalità Principali
-
-- **Diagrammi di Bode**: Plot interattivi per modulo e fase, con tracciamento simultaneo delle curve esatte (Control Theory) e di quelle asintotiche approssimate. Risolti tutti i problemi nativi di sfasamento su zeri o poli nel semipiano destro (RHP).
-- **Diagrammi polari di Nyquist**: Resoconto visivo completo ed evidenziazione delle frequenze $\omega \to 0$ in modo nativo.
-- **Supporto alla Scrittura Simbolica**: Input testuale gestito intelligentemente grazie ad un parsing iterativo con SymPy. Puoi scrivere forme espanse (es: `s^2 + 2*s + 1`) o parzialmente raggruppate. 
-- **Tabella di Interrogazione Frequenziale**: Confronto numerico (errore) tra risposta esatta e approssimazione per frequenze fornite dall'utente.
-- **Pannello di Analisi Automatico**: Elenco dettagliato del Tipo, Ordine, Zeri, Poli (classificati se complessi in smorzamento e pulsazione naturale $\omega_n$), e margini di fase/guadagno.
-- **Dark Mode Dedicata & UI/UX Pulita**: Interfaccia moderna customizzata in formato light/dark.
+Un'applicazione avanzata per l'esplorazione e l'analisi interattiva delle funzioni di trasferimento $G(s)$ nel dominio della frequenza. Sviluppata per studenti di Automatica e Ingegneri, combina la potenza simbolica di **SymPy** con la precisione numerica di **python-control**.
 
 ---
 
-## 🛠 Come scaricarlo ed eseguirlo in locale
+## 🚀 Perché questo Analizzatore?
 
-Per usare il progetto sul tuo computer, assicurati di avere installato **Python 3.10** o una versione superiore.
+A differenza di molti simulatori standard, questo strumento è stato progettato per scopi didattici avanzati, seguendo rigorosamente il **metodo di Basile & Chiacchio**.
 
-### 1. Clona o Scarica il progetto
-Puoi usare Git per scaricare questa repository:
+- **Accuratezza Asintotica**: Calcola i diagrammi approssimati (asintoti) gestendo correttamente i segni della costante di Bode ($K_b$) e le fasi iniziali.
+- **Supporto Non-Minimum Phase**: Gestisce nativamente poli e zeri nel semipiano destro (RHP), applicando correttamente le inversioni di fase asintotiche.
+- **Input Matematico Naturale**: Grazie all'integrazione con **MathLive**, puoi scrivere le formule come le scriveresti su carta, senza dover conoscere la sintassi Python/SymPy.
+
+---
+
+## ✨ Funzionalità
+
+- **Diagrammi di Bode**: Modulo (dB) e Fase (gradi) con confronto immediato tra curva esatta (blu) e approssimata (arancione tratteggiata).
+- **Diagramma di Nyquist**: Vista polare completa con evidenziazione del punto critico (-1, 0) e direzione di percorrenza.
+- **Analisi Automatica**: Calcolo istantaneo di Tipo, Ordine, Zeri, Poli e parametri dei poli complessi ($\omega_n, \zeta$).
+- **Tabella di Verifica**: Inserisci frequenze arbitrarie per ottenere i valori puntuali di modulo e fase ed eliminare ogni dubbio.
+- **Interfaccia Dinamica**: Supporto completo Dark/Light mode con grafici Plotly che si adattano al tema scelto.
+
+---
+
+## 🛠 Installazione ed Esecuzione Locale
+
+### 1. Clonazione
+Scarica il progetto sul tuo computer:
 ```bash
-git clone <URL_DEL_PROGETTO>
+git clone https://github.com/pacale/bode-nyquist-analyzer
 cd bode-nyquist-analyzer
 ```
-*(In alternativa, puoi scaricare il pacchetto ZIP dal sito GitHub ed estrarlo).*
 
-### 2. Crea un ambiente virtuale (consigliato ma opzionale)
+### 2. Preparazione Ambiente (Consigliato)
+Crea un ambiente virtuale per mantenere il sistema pulito:
 ```bash
 python -m venv venv
+# Attivazione Windows:
+venv\Scripts\activate
+# Attivazione Mac/Linux:
+source venv/bin/activate
 ```
-Attiva l'ambiente virtuale:
-- Su **Windows**: `venv\Scripts\activate`
-- Su **Mac/Linux**: `source venv/bin/activate`
 
-### 3. Installa le dipendenze
-Il file `requirements.txt` contiene tutte le librerie necessarie (come `streamlit`, `sympy`, `control`, `plotly`).
+### 3. Installazione Dipendenze
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Avvia l'applicazione Streamlit
-Dalla console nel path principale del progetto esegui:
+### 4. Avvio
 ```bash
 streamlit run app.py
 ```
-L'applicazione si aprirà automaticamente nel tuo browser predefinito all'indirizzo http://localhost:8501.
 
 ---
 
-## 🌐 Deploy su Streamlit Cloud
+## ⌨️ Guida all'Inserimento Formule
 
-Questo progetto è configurato per poter essere rilasciato automaticamente su **Streamlit Community Cloud**.
-1. Carica il codice su GitHub.
-2. Accedi a [share.streamlit.io](https://share.streamlit.io) e fai il Log in.
-3. Clicca su **New app** e seleziona il tuo repository, il branch corrente (es: `master` o `main`), e setta il Main file path su `app.py`.
-4. Clicca "Deploy!". Eventuali aggiornamenti successivi tramite `git push` verranno compilati e aggiornati istantaneamente sul server pubblico.
+L'app supporta l'inserimento tramite tastiera matematica virtuale:
+- Puoi digitare `s^2 + 2s + 1` o usare i pulsanti per frazioni e radici.
+- Il parser trasforma automaticamente il tuo LaTeX in espressioni simboliche elaborate.
+- Esempio di funzione valida: `100 / (s*(1+s/10)*(s^2+s+1))`
 
 ---
 
-### Struttura del Codice Base
-- `app.py`: Racchiude tutto il motore logico e il backend che gestisce l'interfaccia. Integra librerie Plotly, Control e il CSS.
-- `.streamlit/config.toml`: Configurazioni native per disattivare watcher errati ed imporre temi base per compatibilità.
-- `requirements.txt`: Elenco delle librerie che servono al progetto.
+## 📂 Struttura del Progetto
+
+- `app.py`: Core logic, motore di calcolo asintotico e layout Streamlit.
+- `requirements.txt`: Librerie dipendenti.
+- `.streamlit/config.toml`: Ottimizzazioni per il server e configurazione porte.
+
+---
+
+## 📄 Licenza
+
+Distribuito sotto Licenza MIT. Vedi `LICENSE` per maggiori informazioni.
+
+---
+
+*Sviluppato con ❤️ per il mondo dell'Ingegneria.*
