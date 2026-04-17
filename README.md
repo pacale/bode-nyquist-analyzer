@@ -50,15 +50,6 @@ L'applicazione si aprirà automaticamente nel tuo browser predefinito all'indiri
 
 ---
 
-## 🌐 Deploy su Streamlit Cloud
-
-Questo progetto è configurato per poter essere rilasciato automaticamente su **Streamlit Community Cloud**.
-1. Carica il codice su GitHub.
-2. Accedi a [share.streamlit.io](https://share.streamlit.io) e fai il Log in.
-3. Clicca su **New app** e seleziona il tuo repository, il branch corrente (es: `master` o `main`), e setta il Main file path su `app.py`.
-4. Clicca "Deploy!". Eventuali aggiornamenti successivi tramite `git push` verranno compilati e aggiornati istantaneamente sul server pubblico.
-
----
 
 ### Struttura del Codice Base
 - `app.py`: Racchiude tutto il motore logico e il backend che gestisce l'interfaccia. Integra librerie Plotly, Control e il CSS.
