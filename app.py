@@ -35,12 +35,155 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Costanti
 # ---------------------------------------------------------------------------
-_EXACT_COLOR = "#1f77b4"
-_APPROX_COLOR = "#ff7f0e"
-_EXACT_WIDTH = 2.0
+_EXACT_COLOR  = "#4d9de0"   # blu chiaro – leggibile su entrambi i temi
+_APPROX_COLOR = "#f4a261"   # arancione caldo
+_BREAKPT_COLOR = "#e05252"  # rosso per linee verticali ω_r
+_CRITICAL_COLOR = "#ff6b6b" # rosso per punto critico Nyquist
+_EXACT_WIDTH  = 2.0
 _APPROX_WIDTH = 1.5
-_CURSOR_COLOR = "red"
-_QUERY_COLOR = "green"
+_CURSOR_COLOR = "#e05252"
+_QUERY_COLOR  = "#2ecc71"
+
+# ── CSS temi ─────────────────────────────────────────────────────────────
+_DARK_CSS = """
+<style>
+/* === ROOT E BODY === */
+html, body, [data-testid="stAppViewContainer"],
+[data-testid="stAppViewBlockContainer"],
+[data-testid="block-container"],
+.stApp, .main, .main .block-container {
+    background-color: #0e1117 !important;
+    color: #e8e8f0 !important;
+}
+/* === HEADER === */
+header[data-testid="stHeader"],
+header[data-testid="stHeader"] * {
+    background-color: #0e1117 !important;
+}
+/* === SIDEBAR === */
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div:first-child {
+    background-color: #12131f !important;
+    border-right: 1px solid #2a2a3e !important;
+}
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] span,
+section[data-testid="stSidebar"] div {
+    color: #c8c8d8 !important;
+}
+/* === METRIC === */
+[data-testid="stMetricValue"] { color: #7eb8f7 !important; font-size: 1.6rem !important; }
+[data-testid="stMetricLabel"] { color: #9999b8 !important; font-size: 0.78rem !important; }
+/* === INPUT === */
+.stTextInput input, .stTextInput textarea,
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input {
+    background-color: #1c1e2e !important;
+    color: #e8e8f0 !important;
+    border: 1px solid #3a3a5c !important;
+    border-radius: 8px !important;
+}
+.stTextInput input:focus, [data-testid="stTextInput"] input:focus {
+    border-color: #5c6bc0 !important;
+    box-shadow: 0 0 0 2px rgba(92,107,192,0.3) !important;
+}
+/* === SELECT === */
+.stSelectbox select, [data-testid="stSelectbox"] * {
+    background-color: #1c1e2e !important;
+    color: #e8e8f0 !important;
+}
+/* === PULSANTE ANALIZZA === */
+.stButton > button[kind="primary"] {
+    background-color: #e05252 !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+}
+.stButton > button[kind="primary"]:hover {
+    background-color: #c04040 !important;
+    transform: translateY(-1px) !important;
+}
+/* === GRAFICI === */
+.stPlotlyChart, [data-testid="stPlotlyChart"] {
+    background-color: #0e1117 !important;
+    border-radius: 10px !important;
+}
+/* === TESTO === */
+p, h1, h2, h3, h4, label, .stMarkdown, .stCaption { color: #c8c8d8 !important; }
+hr { border-color: #2a2a3e !important; }
+</style>
+"""
+
+_LIGHT_CSS = """
+<style>
+html, body, .stApp, [data-testid="stAppViewContainer"],
+[data-testid="block-container"], .main .block-container {
+    background-color: #f5f6fa !important;
+    color: #1a1a2e !important;
+}
+header[data-testid="stHeader"] { background-color: #f5f6fa !important; }
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div:first-child {
+    background-color: #e8eaf6 !important;
+    border-right: 1px solid #c5cae9 !important;
+}
+</style>
+"""
+
+
+# ---------------------------------------------------------------------------
+# Helper: applica tema Plotly ai grafici (Problema 2)
+# ---------------------------------------------------------------------------
+def applica_tema_plotly(fig: go.Figure, dark_mode: bool) -> go.Figure:
+    """Applica colori e font coerenti al tema scelto su ogni figura Plotly."""
+    if dark_mode:
+        bg       = "#0e1117"
+        paper_bg = "#13141f"
+        grid_col = "#1e1e32"
+        zeroline = "#2a2a4a"
+        font_col = "#c8c8d8"
+        spike_col = "#e05252"
+        template = "plotly_dark"
+    else:
+        bg       = "#ffffff"
+        paper_bg = "#f8f9fc"
+        grid_col = "#e8eaf0"
+        zeroline = "#c5cae9"
+        font_col = "#1a1a2e"
+        spike_col = "#e05252"
+        template = "plotly_white"
+
+    fig.update_layout(
+        template=template,
+        paper_bgcolor=paper_bg,
+        plot_bgcolor=bg,
+        font=dict(color=font_col, size=12, family="'Inter', 'Segoe UI', sans-serif"),
+        title_font=dict(color=font_col, size=14),
+        legend=dict(
+            bgcolor="rgba(0,0,0,0)",
+            font=dict(color=font_col, size=11),
+            bordercolor="rgba(0,0,0,0)",
+        ),
+    )
+    # Aggiorna tutti gli assi presenti (gestisce subplot automaticamente)
+    for key in fig.layout:
+        obj = getattr(fig.layout, key, None)
+        if obj is None:
+            continue
+        if hasattr(obj, "gridcolor"):
+            obj.update(
+                gridcolor=grid_col,
+                zerolinecolor=zeroline,
+                zerolinewidth=1,
+                tickfont=dict(color=font_col, size=11),
+                title_font=dict(color=font_col, size=12),
+                linecolor=grid_col,
+                showgrid=True,
+                spikecolor=spike_col,
+            )
+    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -137,26 +280,36 @@ def parse_transfer_function(latex_num: str, latex_den: str) -> SystemInfo:
     expr = num_expr / den_expr
     num_expr, den_expr = sympy.fraction(sympy.cancel(expr))
 
+    # Usa all_roots() per preservare la molteplicità dei poli/zeri
+    # sympy.solve() restituisce solo radici distinte, perdendo i poli doppi
     try:
-        zeros_sym = sympy.solve(num_expr, s)
-        poles_sym = sympy.solve(den_expr, s)
-    except Exception as exc:
-        raise ValueError(
-            f"Impossibile calcolare poli/zeri: {exc}"
-        ) from exc
+        num_poly = sympy.Poly(sympy.expand(num_expr), s)
+        den_poly = sympy.Poly(sympy.expand(den_expr), s)
+    except sympy.GeneratorsNeeded:
+        num_poly = sympy.Poly(sympy.expand(num_expr), s, domain="ZZ")
+        den_poly = sympy.Poly(sympy.expand(den_expr), s, domain="ZZ")
 
-    zeros = [complex(z) for z in zeros_sym]
-    poles = [complex(p) for p in poles_sym]
+    # Estrai coefficienti e filtra artefatti numerici
+    num_coeffs = [float(c) for c in num_poly.all_coeffs()]
+    den_coeffs = [float(c) for c in den_poly.all_coeffs()]
+    
+    num_coeffs = [c if abs(c) > 1e-10 else 0.0 for c in num_coeffs]
+    den_coeffs = [c if abs(c) > 1e-10 else 0.0 for c in den_coeffs]
 
-    order = den_poly.degree()
+    # Usa np.roots come richiesto, ma forza a 0 gli zeri vicinissimi all'origine per evitare artefatti
+    raw_zeros = np.roots(num_coeffs)
+    raw_poles = np.roots(den_coeffs)
+    zeros = [complex(z) if abs(z) > 1e-10 else 0j for z in raw_zeros]
+    poles = [complex(p) if abs(p) > 1e-10 else 0j for p in raw_poles]
+
+    order = len(den_coeffs) - 1
     system_type = sum(1 for p in poles if abs(p) < 1e-10)
 
     try:
-        gain_sym = sympy.limit(expr, s, 0)
-        if gain_sym.is_finite:
-            static_gain = float(abs(complex(gain_sym)))
-        else:
+        if abs(den_coeffs[-1]) < 1e-15:
             static_gain = None
+        else:
+            static_gain = float(num_coeffs[-1] / den_coeffs[-1])
     except Exception:
         static_gain = None
 
@@ -210,160 +363,150 @@ def _compute_omega_range(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3. BODE APPROSSIMATO (modulo + fase)
+# 3. DECOMPOSIZIONE NELLA FORMA ALTERNATIVA PER BODE
+#    (Metodo Basile & Chiacchio, "Lezioni di Automatica")
 # ═══════════════════════════════════════════════════════════════════════════
 
-def compute_asymptotic_bode(
+import numpy as np
+
+def compute_approximated_bode(
     omega: np.ndarray,
-    info: SystemInfo,
+    info: 'SystemInfo',
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Restituisce *(approx_mag_dB, approx_phase_deg)*."""
-
-    # ── Modulo ────────────────────────────────────────────────────────────
-    events: list[tuple[float, float]] = []
-    for z in info.zeros:
-        wz = abs(z)
-        if wz > 1e-10:
-            events.append((wz, +20.0))
-    for p in info.poles:
-        wp = abs(p)
-        if wp > 1e-10:
-            events.append((wp, -20.0))
-    events.sort(key=lambda e: e[0])
-
-    n_zeros_origin = sum(1 for z in info.zeros if abs(z) < 1e-10)
-    n_poles_origin = sum(1 for p in info.poles if abs(p) < 1e-10)
-    initial_slope = 20.0 * (n_zeros_origin - n_poles_origin)
-
-    try:
-        resp0 = info.tf(1j * omega[0])
-        gain_at_w0 = 20.0 * np.log10(max(abs(resp0), 1e-30))
-    except Exception:
-        gain_at_w0 = 0.0
-
-    log_omega = np.log10(omega)
-    log_w0 = log_omega[0]
-    bp_list = [(np.log10(wb), ds) for wb, ds in events]
-
-    mag_db = np.empty_like(log_omega)
-    for i, lw in enumerate(log_omega):
-        db = gain_at_w0
-        slope = initial_slope
-        prev = log_w0
-        for log_wb, ds in bp_list:
-            if lw <= log_wb:
-                db += slope * (lw - prev)
-                break
-            db += slope * (log_wb - prev)
-            slope += ds
-            prev = log_wb
+    """Calcola diagramma di Bode APPROSSIMATO (asintotico) corretto."""
+    import numpy as np
+    
+    num = info.num_coeffs
+    den = info.den_coeffs
+    
+    # 1. Trova zeri e poli
+    zeros = np.roots(num)
+    poles = np.roots(den)
+    
+    # Separa poli e zeri nell'origine
+    tol = 1e-8
+    z_origin = np.sum(np.abs(zeros) < tol)
+    p_origin = np.sum(np.abs(poles) < tol)
+    g = z_origin - p_origin
+    
+    zeros_fin = zeros[np.abs(zeros) >= tol]
+    poles_fin = poles[np.abs(poles) >= tol]
+    
+    K_num = num[0] if len(num) > 0 else 1.0
+    K_den = den[0] if len(den) > 0 else 1.0
+    
+    breakpoints = []
+    
+    processed_z = np.zeros(len(zeros_fin), dtype=bool)
+    for i, z in enumerate(zeros_fin):
+        if processed_z[i]: continue
+        if np.abs(z.imag) < tol:
+            breakpoints.append(('zero_real', np.abs(z.real), z.real))
+            processed_z[i] = True
         else:
-            db += slope * (lw - prev)
-        mag_db[i] = db
+            for j in range(i+1, len(zeros_fin)):
+                if not processed_z[j] and np.abs(z - np.conj(zeros_fin[j])) < 1e-6:
+                    wn = np.abs(z)
+                    breakpoints.append(('zero_complex', wn, z.real))
+                    processed_z[i] = processed_z[j] = True
+                    break
+    
+    processed_p = np.zeros(len(poles_fin), dtype=bool)
+    for i, p in enumerate(poles_fin):
+        if processed_p[i]: continue
+        if np.abs(p.imag) < tol:
+            breakpoints.append(('pole_real', np.abs(p.real), p.real))
+            processed_p[i] = True
+        else:
+            for j in range(i+1, len(poles_fin)):
+                if not processed_p[j] and np.abs(p - np.conj(poles_fin[j])) < 1e-6:
+                    wn = np.abs(p)
+                    breakpoints.append(('pole_complex', wn, p.real))
+                    processed_p[i] = processed_p[j] = True
+                    break
+    
+    # ── Calcolo K_b con segno corretto (metodo Basile & Chiacchio) ────────
+    # K_b = (a_n / b_m) * product(-z_i_fin) / product(-p_j_fin)
+    # dove a_n e b_m sono i leading coefficients.
+    # Usare (-root) anziché |root| preserva il segno per poli/zeri RHP.
+    K_b = complex(K_num / K_den)
+    for z in zeros_fin:
+        K_b *= (-z)
+    for p in poles_fin:
+        K_b /= (-p)
+    K_b_real = float(K_b.real)  # la parte immaginaria è ~0 per sistemi reali
+    K_bode_abs = abs(K_b_real)
+    
+    mag_dB = 20 * np.log10(max(K_bode_abs, 1e-30)) + g * 20 * np.log10(omega)
+    
+    breakpoints.sort(key=lambda x: x[1])
+    for tipo, wr, _ in breakpoints:
+        if tipo == 'zero_real':
+            slope = +20
+        elif tipo == 'pole_real':
+            slope = -20
+        elif tipo == 'zero_complex':
+            slope = +40
+        elif tipo == 'pole_complex':
+            slope = -40
+        
+        mask = omega > wr
+        mag_dB[mask] += slope * np.log10(omega[mask] / wr)
+    
+    # ── Fase iniziale ─────────────────────────────────────────────────────
+    # G(s) ~ K_b * s^g  per ω → 0
+    # arg(G(jω)) = arg(K_b) + g * arg(jω) = arg(K_b) + g * 90°
+    # + 180° se K_b < 0 (segno negativo del guadagno)
+    phase_deg = np.full(len(omega), float(g * 90.0))
+    if K_b_real < 0:
+        phase_deg += 180.0
+    
+    # ── Delta fase per ogni breakpoint ────────────────────────────────────
+    # Fattore LHP (1+s/wr): arg va 0 → +90°, contributo a G = -90° (polo) o +90° (zero)
+    # Fattore RHP (1-s/wr): arg va 0 → -90°, contributo a G = +90° (polo) o -90° (zero)
+    # Il segno si inverte per radici RHP perché il fattore normalizzato ha fase opposta.
+    def get_delta_fase(tipo: str, parte_reale: float) -> float:
+        lhp = (parte_reale <= 1e-8)
+        if tipo == 'zero_real':    return +90.0 if lhp else -90.0
+        if tipo == 'pole_real':    return -90.0 if lhp else +90.0
+        if tipo == 'zero_complex': return +180.0 if lhp else -180.0
+        if tipo == 'pole_complex': return -180.0 if lhp else +180.0
+        return 0.0
 
-    # ── Fase (gradi) ──────────────────────────────────────────────────────
-    phase = np.zeros_like(log_omega)
-    for _ in range(n_poles_origin):
-        phase -= 90.0
-    for _ in range(n_zeros_origin):
-        phase += 90.0
+    for tipo, wr, parte_reale in breakpoints:
+        w_start = wr / 10.0
+        w_end   = wr * 10.0
+        
+        delta = get_delta_fase(tipo, parte_reale)
+        
+        mask_ramp  = (omega >= w_start) & (omega <= w_end)
+        mask_after = omega > w_end
+        
+        if np.any(mask_ramp):
+            phase_deg[mask_ramp] += delta * (
+                np.log10(omega[mask_ramp]) - np.log10(w_start)
+            ) / (np.log10(w_end) - np.log10(w_start))
+        
+        phase_deg[mask_after] += delta
+    
+    return mag_dB, phase_deg
 
-    for p in info.poles:
-        wp = abs(p)
-        if wp < 1e-10:
-            continue
-        lw_b = np.log10(wp)
-        for i, lw in enumerate(log_omega):
-            if lw < lw_b - 1:
-                pass
-            elif lw > lw_b + 1:
-                phase[i] -= 90.0
-            else:
-                phase[i] -= 45.0 * (lw - (lw_b - 1))
 
-    for z in info.zeros:
-        wz = abs(z)
-        if wz < 1e-10:
-            continue
-        lw_b = np.log10(wz)
-        for i, lw in enumerate(log_omega):
-            if lw < lw_b - 1:
-                pass
-            elif lw > lw_b + 1:
-                phase[i] += 90.0
-            else:
-                phase[i] += 45.0 * (lw - (lw_b - 1))
-
-    return mag_db, phase
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. NYQUIST APPROSSIMATO
 # ═══════════════════════════════════════════════════════════════════════════
 
-def compute_asymptotic_nyquist(
-    omega: np.ndarray,
-    info: SystemInfo,
-) -> np.ndarray:
-    """Restituisce G(jω) approssimato tramite fattori del primo ordine."""
-    n = len(omega)
-    mag_total = np.ones(n)
-    phase_total = np.zeros(n)  # gradi
-
-    # Guadagno statico (rapporto coefficienti costanti)
-    try:
-        dc_gain = abs(info.num_coeffs[-1] / info.den_coeffs[-1])
-    except (ZeroDivisionError, IndexError):
-        dc_gain = 1.0
-    mag_total *= dc_gain
-
-    log_omega = np.log10(omega)
-
-    n_zeros_origin = sum(1 for z in info.zeros if abs(z) < 1e-10)
-    n_poles_origin = sum(1 for p in info.poles if abs(p) < 1e-10)
-
-    # Poli/zeri nell'origine
-    for _ in range(n_poles_origin):
-        mag_total /= omega
-        phase_total -= 90.0
-    for _ in range(n_zeros_origin):
-        mag_total *= omega
-        phase_total += 90.0
-
-    # Poli non all'origine
-    for p in info.poles:
-        wp = abs(p)
-        if wp < 1e-10:
-            continue
-        lw_b = np.log10(wp)
-        for i, (w, lw) in enumerate(zip(omega, log_omega)):
-            if w >= wp:
-                mag_total[i] *= (wp / w)
-            if lw < lw_b - 1:
-                pass
-            elif lw > lw_b + 1:
-                phase_total[i] -= 90.0
-            else:
-                phase_total[i] -= 45.0 * (lw - (lw_b - 1))
-
-    # Zeri non all'origine
-    for z in info.zeros:
-        wz = abs(z)
-        if wz < 1e-10:
-            continue
-        lw_b = np.log10(wz)
-        for i, (w, lw) in enumerate(zip(omega, log_omega)):
-            if w >= wz:
-                mag_total[i] *= (w / wz)
-            if lw < lw_b - 1:
-                pass
-            elif lw > lw_b + 1:
-                phase_total[i] += 90.0
-            else:
-                phase_total[i] += 45.0 * (lw - (lw_b - 1))
-
-    phase_rad = np.deg2rad(phase_total)
-    return mag_total * (np.cos(phase_rad) + 1j * np.sin(phase_rad))
+def calcola_polare_approssimato(mag_dB_approx, phase_deg_approx, omega):
+    """Ricava il diagramma polare dalla versione approssimata del Bode."""
+    mag_lin = 10 ** (mag_dB_approx / 20.0)
+    phase_rad = np.deg2rad(phase_deg_approx)
+    
+    re = mag_lin * np.cos(phase_rad)
+    im = mag_lin * np.sin(phase_rad)
+    
+    return re, im
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -371,6 +514,7 @@ def compute_asymptotic_nyquist(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_bode(
+    plotly_template: str,
     omega: np.ndarray,
     mag_db: np.ndarray,
     phase_deg: np.ndarray,
@@ -471,7 +615,7 @@ def plot_bode(
         for row in (1, 2):
             fig.add_vline(
                 x=wb, line_width=1, line_dash="dot",
-                line_color=_APPROX_COLOR,
+                line_color=_BREAKPT_COLOR,
                 annotation_text=label if row == 1 else "",
                 annotation_position="top right",
                 annotation_font_size=10,
@@ -522,9 +666,9 @@ def plot_bode(
         row=2, col=1,
     )
 
-    # Y modulo: ±5 dB dalla curva esatta – auto-range disabilitato
-    y_mag_min = float(np.nanmin(mag_db))
-    y_mag_max = float(np.nanmax(mag_db))
+    # Y modulo: auto-range basato sul minimo/massimo di entrambe le curve
+    y_mag_min = float(min(np.nanmin(mag_db), np.nanmin(approx_mag_db)))
+    y_mag_max = float(max(np.nanmax(mag_db), np.nanmax(approx_mag_db)))
     fig.update_yaxes(
         title_text="Modulo (dB)",
         range=[y_mag_min - 5, y_mag_max + 5],
@@ -533,9 +677,10 @@ def plot_bode(
     )
 
     # Y fase
+    ph_min = float(min(np.nanmin(exact_phase_plot), np.nanmin(approx_phase_plot)))
+    ph_max = float(max(np.nanmax(exact_phase_plot), np.nanmax(approx_phase_plot)))
+
     if phase_in_radians:
-        ph_min = float(np.nanmin(exact_phase_plot))
-        ph_max = float(np.nanmax(exact_phase_plot))
         tickvals = [
             -2, -1.75, -1.5, -1.25, -1, -0.75, -0.5, -0.25,
             0,
@@ -556,9 +701,7 @@ def plot_bode(
             row=2, col=1,
         )
     else:
-        ph_min = float(np.nanmin(exact_phase_plot))
-        ph_max = float(np.nanmax(exact_phase_plot))
-        tv = list(np.arange(-360, 361, 45))
+        tv = list(np.arange(int(ph_min) - 45, int(ph_max) + 46, 45))
         tt = [f"{int(v)}°" for v in tv]
         fig.update_yaxes(
             title_text=phase_label,
@@ -586,14 +729,14 @@ def plot_bode(
 
     # ── Layout ────────────────────────────────────────────────────────────
     fig.update_layout(
-        height=750,
-        template="plotly_white",
+        height=700,
+        template=plotly_template,
         margin=dict(l=60, r=40, t=50, b=60),
         hovermode="x unified",
         hoverdistance=50,
         legend=dict(
-            orientation="v", yanchor="top", y=0.99,
-            xanchor="right", x=0.99,
+            orientation="h", yanchor="bottom", y=1.02,
+            xanchor="right", x=1,
         ),
     )
     return fig
@@ -604,15 +747,14 @@ def plot_bode(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def plot_nyquist(
+    plotly_template: str,
     omega: np.ndarray,
     resp: np.ndarray,
-    approx_resp: np.ndarray,
     cursor_omega: Optional[float] = None,
     cursor_resp: Optional[complex] = None,
 ) -> go.Figure:
-    """Diagramma polare con traccia esatta e approssimata."""
+    """Diagramma polare (solo esatto)."""
     re_e, im_e = resp.real, resp.imag
-    re_a, im_a = approx_resp.real, approx_resp.imag
 
     fig = go.Figure()
 
@@ -620,13 +762,6 @@ def plot_nyquist(
     fig.add_trace(go.Scatter(
         x=re_e, y=im_e, mode="lines", name="Nyquist Esatto",
         line=dict(color=_EXACT_COLOR, width=_EXACT_WIDTH),
-        hovertemplate="Re: %{x:.4f}<br>Im: %{y:.4f}<extra></extra>",
-    ))
-
-    # Traccia approssimata
-    fig.add_trace(go.Scatter(
-        x=re_a, y=im_a, mode="lines", name="Nyquist Approssimato",
-        line=dict(color=_APPROX_COLOR, width=_APPROX_WIDTH, dash="dash"),
         hovertemplate="Re: %{x:.4f}<br>Im: %{y:.4f}<extra></extra>",
     ))
 
@@ -690,16 +825,16 @@ def plot_nyquist(
     fig.update_layout(
         xaxis_title="Re{G(jω)}",
         yaxis_title="Im{G(jω)}",
-        height=600,
-        template="plotly_white",
+        height=700,
+        template=plotly_template,
         yaxis_scaleanchor="x",
         showlegend=True,
         hovermode="closest",
         legend=dict(
-            orientation="v", yanchor="top", y=0.99,
-            xanchor="right", x=0.99,
+            orientation="h", yanchor="bottom", y=1.02,
+            xanchor="right", x=1,
         ),
-        margin=dict(l=60, r=40, t=30, b=60),
+        margin=dict(l=60, r=40, t=50, b=60),
     )
     return fig
 
@@ -756,7 +891,7 @@ def query_single_frequency(
     # corretto del guadagno alla prima frequenza del range (come nel
     # diagramma disegnato).
     omega_full = _compute_omega_range(info, n_points=500)
-    approx_mag_full, approx_phase_full = compute_asymptotic_bode(
+    approx_mag_full, approx_phase_full = compute_approximated_bode(
         omega_full, info,
     )
     mag_approx_dB = float(np.interp(
@@ -913,11 +1048,16 @@ def _format_roots(roots: list[complex], st_container, label_prefix: str):
             if conj_index != -1:
                 processed.add(i)
                 processed.add(conj_index)
-                st_container.text_input(
+                # Problema 6: formatta polo complesso come stringa leggibile
+                sign = "+" if r.imag >= 0 else "−"
+                valore = f"{r.real:.4f} {sign} {abs(r.imag):.4f}j"
+                st_container.metric(
                     label=f"{label_prefix} {i+1}-{conj_index+1} (complessi coniugati)",
-                    value=f"{r.real:.4f} ± {abs(r.imag):.4f}j",
-                    disabled=True, key=f"{label_prefix}_{i}_{conj_index}"
+                    value=valore,
                 )
+                wn = abs(r)
+                zeta = -r.real / wn if wn > 1e-10 else 0.0
+                st_container.caption(f"ωₙ = {wn:.4f} rad/s  |  ζ = {zeta:.4f}")
             else:
                 processed.add(i)
                 st_container.text_input(
@@ -986,26 +1126,32 @@ def _show_sidebar_info(info: SystemInfo, omega: np.ndarray) -> None:
     st.sidebar.caption(f"G(s) — ordine {int(info.order)}, tipo {int(info.system_type)}")
 
     # Zeri
-    st.sidebar.subheader("Zeri")
-    _format_roots(info.zeros, st.sidebar, "Zero")
+    if info.zeros:
+        st.sidebar.subheader("Zeri")
+        _format_roots(info.zeros, st.sidebar, "Zero")
 
     # Poli
-    st.sidebar.subheader("Poli")
-    _format_roots(info.poles, st.sidebar, "Polo")
+    if info.poles:
+        st.sidebar.subheader("Poli")
+        _format_roots(info.poles, st.sidebar, "Polo")
 
     # Scalari
     st.sidebar.metric("Ordine del Sistema", int(info.order))
     st.sidebar.metric("Tipo del Sistema", int(info.system_type))
 
-    if info.static_gain is None:
-        st.sidebar.metric(
-            "Guadagno Statico K",
-            "∞" if info.system_type > 0 else "0",
-        )
-    elif info.static_gain == 0.0:
-        st.sidebar.metric("Guadagno Statico K", "0")
-    else:
-        st.sidebar.metric("Guadagno Statico K", round(info.static_gain, 4))
+    K_num = float(info.num_coeffs[0]) if len(info.num_coeffs) > 0 else 1.0
+    K_den = float(info.den_coeffs[0]) if len(info.den_coeffs) > 0 else 1.0
+    K_b_complex = complex(K_num / K_den)
+    for z in info.zeros:
+        if abs(z) > 1e-8: K_b_complex *= (-z)
+    for p in info.poles:
+        if abs(p) > 1e-8: K_b_complex /= (-p)
+    K_b = float(K_b_complex.real)
+
+    segno = "−" if K_b < 0 else "+"
+    st.sidebar.metric("Costante di Bode |K_b|", f"{abs(K_b):.4f}")
+    if K_b < 0:
+        st.sidebar.caption("K_b < 0 → sfasamento iniziale di +180° incluso nella fase")
 
     margins = compute_stability_margins(info.tf, omega)
 
@@ -1062,6 +1208,47 @@ def _show_sidebar_info(info: SystemInfo, omega: np.ndarray) -> None:
 
 def main() -> None:
     """Punto di ingresso principale dell'applicazione."""
+
+    with st.sidebar:
+        st.header("⚙️ Informazioni Sistema")
+        
+        dark_mode = st.toggle("🌙 Modalità Scura", value=False)
+        plotly_template = "plotly_dark" if dark_mode else "plotly_white"
+        
+        st.divider()
+        
+        if st.session_state.get('analizzato', False):
+            poles = st.session_state['poles']
+            zeros = st.session_state['zeros']
+            order = st.session_state['order']
+            K_static = st.session_state['K_static']
+            
+            st.metric("Ordine", order)
+            if K_static is None:
+                st.metric("Guadagno Statico K", "∞")
+            else:
+                st.metric("Guadagno Statico K", f"{K_static:.4f}" if not np.isinf(K_static) else "∞")
+            
+            st.subheader("Poli")
+            if len(poles) > 0:
+                for i, p in enumerate(poles):
+                    if np.abs(p.imag) < 1e-8:
+                        st.write(f"p{i+1} = {p.real:.4f}")
+                    else:
+                        st.write(f"p{i+1} = {p.real:.4f} ± {np.abs(p.imag):.4f}j")
+            else:
+                st.write("Nessun polo finito")
+            
+            if len(zeros) > 0:
+                st.subheader("Zeri")
+                for i, z in enumerate(zeros):
+                    if np.abs(z.imag) < 1e-8:
+                        st.write(f"z{i+1} = {z.real:.4f}")
+                    else:
+                        st.write(f"z{i+1} = {z.real:.4f} ± {np.abs(z.imag):.4f}j")
+        else:
+            st.info("Inserisci i coefficienti e premi Analizza")
+
     st.title("📈 Analizzatore Interattivo Bode & Nyquist")
     st.markdown(
         "Inserisci il **numeratore** e il **denominatore** di G(s) qui sotto, "
@@ -1117,15 +1304,18 @@ def main() -> None:
 
 
     # Toggle unità fase (persiste nello stato)
-    phase_unit = st.radio(
+    phase_unit = st.sidebar.radio(
         "Unità fase",
-        ["Gradi (°)", "Radianti (π)"],
+        ["rad", "°"],
         horizontal=True,
-        index=0 if st.session_state.phase_unit == "Gradi (°)" else 1,
-        key="phase_unit_radio",
     )
-    st.session_state.phase_unit = phase_unit
-    phase_in_radians = phase_unit == "Radianti (π)"
+    phase_in_radians = phase_unit == "rad"
+
+    
+    if dark_mode:
+        st.markdown(_DARK_CSS, unsafe_allow_html=True)
+    else:
+        st.markdown(_LIGHT_CSS, unsafe_allow_html=True)
 
     analyze_clicked = st.button("🔍 Analizza", type="primary")
 
@@ -1137,12 +1327,14 @@ def main() -> None:
         return
 
     # ── Parsing ───────────────────────────────────────────────────────────
+    import logging
     try:
         with st.spinner("Calcolo in corso..."):
             info = parse_transfer_function(num_str, den_str)
-    except (ValueError, Exception) as exc:
-        st.error(f"⚠️ {exc}")
-        return
+    except Exception as exc:
+        logging.error(f"Parsing error: {exc}", exc_info=True)
+        st.error("⚠️ Sintassi non valida o errore nel parsing. Esempio corretto: `s**2 + 3*s + 2`")
+        st.stop()
 
     # ── Risposta in frequenza ─────────────────────────────────────────────
     omega = _compute_omega_range(info, n_points=500)
@@ -1158,16 +1350,19 @@ def main() -> None:
             mag = np.abs(resp)
             mag_db = 20.0 * np.log10(np.where(mag > 0, mag, 1e-30))
             phase_deg = np.degrees(np.unwrap(np.angle(resp)))
-            approx_mag_db, approx_phase_deg = compute_asymptotic_bode(
-                omega, info,
-            )
-
             # Nyquist
             resp_ny = info.tf(1j * omega_ny)
-            approx_resp_ny = compute_asymptotic_nyquist(omega_ny, info)
     except Exception as exc:
-        st.error(f"⚠️ Errore di calcolo: {exc}")
-        return
+        logging.error(f"Calcolo esatto error: {exc}", exc_info=True)
+        st.error("⚠️ Errore nel calcolo esatto. Verifica che il denominatore non abbia radici a zero esatto.")
+        st.stop()
+
+    try:
+        approx_mag_db, approx_phase_deg = compute_approximated_bode(omega, info)
+    except Exception as exc:
+        logging.error(f"Calcolo approssimato error: {exc}", exc_info=True)
+        st.warning("⚠️ Calcolo degli asintoti non riuscito. Viene mostrato solo il diagramma esatto.")
+        approx_mag_db, approx_phase_deg = None, None
 
     # ── Determina omega_min / omega_max dal vettore ────────────────────────
     omega_min_val = float(omega[0])
@@ -1181,25 +1376,45 @@ def main() -> None:
 
     # ── Formula Analitica G(s) ────────────────────────────────────────────
     st.markdown("---")
-    from sympy import latex
-    
+    from sympy import latex, Poly, cancel, fraction, expand as sp_expand
+
     col_formula, col_info = st.columns([3, 1])
     with col_formula:
         st.markdown("**G(s) analizzata:**")
-        st.latex(r"G(s) = " + latex(info.num_expr / info.den_expr))
+        # Problema 5: normalizza il segno in modo che il numeratore abbia leading coeff > 0
+        s_sym = sympy.Symbol('s')
+        numer_raw, denom_raw = fraction(cancel(info.num_expr / info.den_expr))
+        numer_exp = sp_expand(numer_raw)
+        denom_exp = sp_expand(denom_raw)
+        try:
+            leading_num = Poly(numer_exp, s_sym).all_coeffs()[0]
+            if leading_num < 0:
+                numer_exp = sp_expand(-numer_exp)
+                denom_exp = sp_expand(-denom_exp)
+        except Exception:
+            pass
+        latex_gs = r"\frac{" + latex(numer_exp) + r"}{" + latex(denom_exp) + r"}"
+        st.latex(r"G(s) = " + latex_gs)
     with col_info:
         st.metric("Ordine", int(info.order))
         st.metric("Tipo", int(info.system_type))
 
+
     # ── Diagramma di Bode ─────────────────────────────────────────────────
     st.subheader("Diagramma di Bode")
-    bode_fig = plot_bode(
-        omega, mag_db, phase_deg,
-        approx_mag_db, approx_phase_deg, info,
-        phase_in_radians=phase_in_radians,
-        cursor_omega=st.session_state.cursor_omega,
-    )
-    st.plotly_chart(bode_fig, use_container_width=True)
+    try:
+        bode_fig = plot_bode(
+            plotly_template,
+            omega, mag_db, phase_deg,
+            approx_mag_db, approx_phase_deg, info,
+            phase_in_radians=phase_in_radians,
+            cursor_omega=st.session_state.cursor_omega,
+        )
+        bode_fig = applica_tema_plotly(bode_fig, dark_mode)
+        st.plotly_chart(bode_fig, use_container_width=True, config={"displaylogo": False})
+    except Exception as exc:
+        logging.error(f"Bode plot error: {exc}", exc_info=True)
+        st.error("⚠️ Errore nella generazione del diagramma di Bode.")
 
     # ══════════════════════════════════════════════════════════════════════
     # INTERROGAZIONE PUNTUALE (dopo Bode, prima del cursore slider)
@@ -1286,12 +1501,18 @@ def main() -> None:
     cursor_resp_ny = None
     if st.session_state.cursor_omega is not None:
         cursor_resp_ny = info.tf(1j * st.session_state.cursor_omega)
-    nyquist_fig = plot_nyquist(
-        omega_ny, resp_ny, approx_resp_ny,
-        cursor_omega=st.session_state.cursor_omega,
-        cursor_resp=cursor_resp_ny,
-    )
-    st.plotly_chart(nyquist_fig, use_container_width=True)
+    try:
+        nyquist_fig = plot_nyquist(
+            plotly_template,
+            omega_ny, resp_ny,
+            cursor_omega=st.session_state.cursor_omega,
+            cursor_resp=cursor_resp_ny,
+        )
+        nyquist_fig = applica_tema_plotly(nyquist_fig, dark_mode)
+        st.plotly_chart(nyquist_fig, use_container_width=True, config={"displaylogo": False})
+    except Exception as exc:
+        logging.error(f"Nyquist plot error: {exc}", exc_info=True)
+        st.error("⚠️ Errore nella generazione del diagramma di Nyquist.")
 
 
 # ---------------------------------------------------------------------------
