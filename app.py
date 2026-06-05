@@ -1363,6 +1363,344 @@ def _show_sidebar_info(info: SystemInfo, omega: np.ndarray) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 8b. DISCRETIZZAZIONE C(s) → C(z) → u[k]
+# ═══════════════════════════════════════════════════════════════════════════
+
+def discretize_tf(num_expr_sym, den_expr_sym, Ts_val: float, method: str) -> dict:
+    """
+    Discretizza C(s) = num_expr_sym / den_expr_sym usando sostituzione algebrica.
+
+    Parametri
+    ---------
+    num_expr_sym, den_expr_sym : espressioni SymPy in 's'
+    Ts_val  : periodo di campionamento (float > 0)
+    method  : 'forward' | 'backward' | 'tustin'
+
+    Restituisce
+    -----------
+    dict con chiavi: steps, cz_num_coeffs, cz_den_coeffs, diff_eq_str, c_code
+    """
+    s_sym = sympy.Symbol('s')
+    z_sym = sympy.Symbol('z')
+    T_sym = sympy.Symbol('T', positive=True)
+
+    # ── STEP 1: Sostituzione ──────────────────────────────────────────────
+    if method == 'forward':
+        s_sub = (z_sym - 1) / T_sym
+        method_name = "Rapporto in Avanti (Forward Euler)"
+        s_formula_latex = r"s = \frac{z - 1}{T_s}"
+    elif method == 'backward':
+        s_sub = (z_sym - 1) / (z_sym * T_sym)
+        method_name = "Rapporto all'Indietro (Backward Euler)"
+        s_formula_latex = r"s = \frac{z - 1}{z \cdot T_s}"
+    elif method == 'tustin':
+        s_sub = (sympy.Rational(2, 1) / T_sym) * (z_sym - 1) / (z_sym + 1)
+        method_name = "Bilineare (Tustin)"
+        s_formula_latex = r"s = \frac{2}{T_s} \cdot \frac{z - 1}{z + 1}"
+    else:
+        raise ValueError(f"Metodo sconosciuto: {method}")
+
+    steps = []
+
+    # Step 1 text
+    cs_latex = r"\frac{" + sympy.latex(num_expr_sym) + r"}{" + sympy.latex(den_expr_sym) + r"}"
+    step1 = (
+        f"**STEP 1 — Sostituzione ({method_name})**\n\n"
+        f"$$C(s) = {cs_latex}$$\n\n"
+        f"Applico: ${s_formula_latex}$  con  $T_s = {Ts_val}$\n\n"
+    )
+    steps.append(step1)
+
+    # ── STEP 2: Riduzione a forma razionale ───────────────────────────────
+    num_z_raw = num_expr_sym.subs(s_sym, s_sub)
+    den_z_raw = den_expr_sym.subs(s_sym, s_sub)
+
+    num_z_simplified = sympy.simplify(num_z_raw)
+    den_z_simplified = sympy.simplify(den_z_raw)
+
+    Cz_expr = sympy.cancel(num_z_simplified / den_z_simplified)
+    Cz_num, Cz_den = sympy.fraction(Cz_expr)
+
+    Cz_num = sympy.expand(Cz_num.subs(T_sym, Ts_val))
+    Cz_den = sympy.expand(Cz_den.subs(T_sym, Ts_val))
+
+    try:
+        num_poly_z = sympy.Poly(Cz_num, z_sym)
+        den_poly_z = sympy.Poly(Cz_den, z_sym)
+    except sympy.GeneratorsNeeded:
+        num_poly_z = sympy.Poly(Cz_num, z_sym, domain='RR')
+        den_poly_z = sympy.Poly(Cz_den, z_sym, domain='RR')
+
+    num_coeffs_z = [float(c) for c in num_poly_z.all_coeffs()]
+    den_coeffs_z = [float(c) for c in den_poly_z.all_coeffs()]
+
+    # Normalizza per il coefficiente leader del denominatore
+    a0 = den_coeffs_z[0]
+    num_coeffs_z_norm = [c / a0 for c in num_coeffs_z]
+    den_coeffs_z_norm = [c / a0 for c in den_coeffs_z]
+
+    # Ricostruisci polinomi normalizzati per display pulito
+    Cz_num_disp = sum(
+        sympy.nsimplify(c, rational=False) * z_sym**(len(num_coeffs_z_norm) - 1 - i)
+        for i, c in enumerate(num_coeffs_z_norm)
+    )
+    Cz_den_disp = sum(
+        sympy.nsimplify(c, rational=False) * z_sym**(len(den_coeffs_z_norm) - 1 - i)
+        for i, c in enumerate(den_coeffs_z_norm)
+    )
+
+    cz_latex = (r"\frac{" + sympy.latex(sympy.expand(Cz_num_disp))
+                + r"}{" + sympy.latex(sympy.expand(Cz_den_disp)) + r"}")
+    step2 = (
+        f"**STEP 2 — Riduzione a Forma Razionale**\n\n"
+        f"$$C(z) = \\frac{{U(z)}}{{E(z)}} = {cz_latex}$$\n\n"
+    )
+    steps.append(step2)
+
+    # ── STEP 3: Prodotto incrociato ───────────────────────────────────────
+    n_den = len(den_coeffs_z_norm)
+    n_num = len(num_coeffs_z_norm)
+    order_den = n_den - 1
+    order_num = n_num - 1
+
+    def _poly_terms_latex(coeffs, var_name, highest_power):
+        terms = []
+        for i, c in enumerate(coeffs):
+            power = highest_power - i
+            if abs(c) < 1e-14:
+                continue
+            c_str = f"{c:+.6g}" if len(terms) > 0 or c < 0 else f"{c:.6g}"
+            if power > 0:
+                terms.append(f"{c_str} \\cdot z^{{{power}}} {var_name}")
+            else:
+                terms.append(f"{c_str} \\cdot {var_name}")
+        return " ".join(terms) if terms else "0"
+
+    lhs_latex = _poly_terms_latex(den_coeffs_z_norm, "U(z)", order_den)
+    rhs_latex = _poly_terms_latex(num_coeffs_z_norm, "E(z)", order_num)
+
+    step3 = (
+        f"**STEP 3 — Prodotto Incrociato**\n\n"
+        f"$$U(z) \\cdot D(z) = E(z) \\cdot N(z)$$\n\n"
+        f"$${lhs_latex} = {rhs_latex}$$\n\n"
+    )
+    steps.append(step3)
+
+    # ── STEP 4: Antitrasformata z → k ─────────────────────────────────────
+    def _time_terms(coeffs, var_name, highest_power):
+        terms = []
+        for i, c in enumerate(coeffs):
+            power = highest_power - i
+            if abs(c) < 1e-14:
+                continue
+            c_str = f"{c:+.6g}" if len(terms) > 0 or c < 0 else f"{c:.6g}"
+            if power > 0:
+                terms.append(f"{c_str} \\cdot {var_name}[k{power:+d}]")
+            else:
+                terms.append(f"{c_str} \\cdot {var_name}[k]")
+        return " ".join(terms) if terms else "0"
+
+    lhs_time = _time_terms(den_coeffs_z_norm, "u", order_den)
+    rhs_time = _time_terms(num_coeffs_z_norm, "e", order_num)
+
+    step4 = (
+        f"**STEP 4 — Antitrasformata (dominio temporale discreto)**\n\n"
+        f"Regola: $z^n \\cdot X(z) \\Rightarrow x[k+n]$\n\n"
+        f"$${lhs_time} = {rhs_time}$$\n\n"
+    )
+    steps.append(step4)
+
+    # ── STEP 5: Causalità ─────────────────────────────────────────────────
+    max_order = max(order_den, order_num)
+
+    def _causal_terms(coeffs, var_name, highest_power, shift):
+        terms = []
+        for i, c in enumerate(coeffs):
+            power = highest_power - i
+            k_idx = power - shift
+            if abs(c) < 1e-14:
+                continue
+            c_str = f"{c:+.6g}" if len(terms) > 0 or c < 0 else f"{c:.6g}"
+            if k_idx > 0:
+                terms.append(f"{c_str} * {var_name}[k+{k_idx}]")
+            elif k_idx == 0:
+                terms.append(f"{c_str} * {var_name}[k]")
+            else:
+                terms.append(f"{c_str} * {var_name}[k{k_idx}]")
+        return terms
+
+    lhs_causal = _causal_terms(den_coeffs_z_norm, "u", order_den, max_order)
+    rhs_causal = _causal_terms(num_coeffs_z_norm, "e", order_num, max_order)
+
+    # Isola u[k]
+    rhs_full = list(rhs_causal)
+    for term in lhs_causal[1:]:
+        if term.startswith("+"):
+            rhs_full.append("-" + term[1:])
+        elif term.startswith("-"):
+            rhs_full.append("+" + term[1:])
+        else:
+            rhs_full.append("-" + term)
+
+    diff_eq_str = "u[k] = " + " ".join(rhs_full)
+
+    # LaTeX per step 5
+    rhs_full_latex = []
+    for term in rhs_causal:
+        rhs_full_latex.append(term.replace("*", r" \cdot "))
+    for term in lhs_causal[1:]:
+        neg = term.replace("*", r" \cdot ")
+        if neg.startswith("+"):
+            rhs_full_latex.append("-" + neg[1:])
+        elif neg.startswith("-"):
+            rhs_full_latex.append("+" + neg[1:])
+        else:
+            rhs_full_latex.append("-" + neg)
+
+    eq_latex = "u[k] = " + " ".join(rhs_full_latex)
+
+    step5 = (
+        f"**STEP 5 — Causalità (Equazione alle Differenze Implementabile)**\n\n"
+        f"Dopo aver ritardato di {max_order} passi e isolato $u[k]$:\n\n"
+        f"$${eq_latex}$$\n\n"
+    )
+
+    # ── Genera codice C/C++ ───────────────────────────────────────────────
+    c_lines = []
+    c_lines.append(f"// Equazione alle differenze — Metodo: {method_name}")
+    c_lines.append(f"// Ts = {Ts_val} s")
+    c_lines.append("")
+    c_lines.append("// Variabili globali (persistenti tra i campioni)")
+
+    max_u_delay = 0
+    max_e_delay = 0
+    for i, c in enumerate(den_coeffs_z_norm):
+        delay = max_order - (order_den - i)
+        if abs(c) > 1e-14 and delay > 0:
+            max_u_delay = max(max_u_delay, delay)
+    for i, c in enumerate(num_coeffs_z_norm):
+        delay = max_order - (order_num - i)
+        if abs(c) > 1e-14:
+            max_e_delay = max(max_e_delay, delay)
+
+    if max_u_delay > 0:
+        c_lines.append(f"static double u_prev[{max_u_delay}] = {{0}};")
+    if max_e_delay > 0:
+        c_lines.append(f"static double e_prev[{max_e_delay}] = {{0}};")
+    c_lines.append("")
+    c_lines.append("double compute_control(double e_k) {")
+
+    u_parts = []
+    for i, c in enumerate(num_coeffs_z_norm):
+        delay = max_order - (order_num - i)
+        if abs(c) < 1e-14:
+            continue
+        if delay == 0:
+            u_parts.append(f"({c:.10g}) * e_k")
+        else:
+            u_parts.append(f"({c:.10g}) * e_prev[{delay - 1}]")
+
+    for i, c in enumerate(den_coeffs_z_norm[1:], start=1):
+        delay = max_order - (order_den - i)
+        if abs(c) < 1e-14:
+            continue
+        u_parts.append(f"({-c:.10g}) * u_prev[{delay - 1}]")
+
+    c_lines.append("    double u_k = " + "\n                  + ".join(u_parts) + ";")
+    c_lines.append("")
+
+    if max_u_delay > 1:
+        c_lines.append("    // Shift buffer u")
+        for d in range(max_u_delay - 1, 0, -1):
+            c_lines.append(f"    u_prev[{d}] = u_prev[{d-1}];")
+    if max_u_delay > 0:
+        c_lines.append("    u_prev[0] = u_k;")
+
+    if max_e_delay > 1:
+        c_lines.append("    // Shift buffer e")
+        for d in range(max_e_delay - 1, 0, -1):
+            c_lines.append(f"    e_prev[{d}] = e_prev[{d-1}];")
+    if max_e_delay > 0:
+        c_lines.append("    e_prev[0] = e_k;")
+
+    c_lines.append("")
+    c_lines.append("    return u_k;")
+    c_lines.append("}")
+
+    c_code = "\n".join(c_lines)
+    step5 += f"**Codice C/C++ pronto per microcontrollore:**\n\n```c\n{c_code}\n```\n"
+    steps.append(step5)
+
+    return {
+        'steps': steps,
+        'cz_num_coeffs': num_coeffs_z_norm,
+        'cz_den_coeffs': den_coeffs_z_norm,
+        'diff_eq_str': diff_eq_str,
+        'c_code': c_code,
+        'method_name': method_name,
+    }
+
+
+def render_discretization_section(info: SystemInfo, dark_mode: bool) -> None:
+    """Renderizza la sezione UI di discretizzazione."""
+    st.markdown("---")
+    st.subheader("🔄 Discretizzazione C(s) → C(z) → u[k]")
+    st.caption(
+        "Converti la funzione di trasferimento continua in discreta "
+        "e ottieni l'equazione alle differenze causale per microcontrollore."
+    )
+
+    col_ts, col_method = st.columns(2)
+    with col_ts:
+        Ts_input = st.number_input(
+            "Periodo di campionamento Tₛ [s]",
+            min_value=1e-8,
+            value=0.01,
+            step=0.001,
+            format="%.6f",
+            key="disc_ts",
+        )
+    with col_method:
+        method_label = st.selectbox(
+            "Metodo di discretizzazione",
+            options=[
+                "Bilineare (Tustin)",
+                "Rapporto in Avanti (Forward Euler)",
+                "Rapporto all'Indietro (Backward Euler)",
+            ],
+            key="disc_method",
+        )
+    method_map = {
+        "Bilineare (Tustin)": "tustin",
+        "Rapporto in Avanti (Forward Euler)": "forward",
+        "Rapporto all'Indietro (Backward Euler)": "backward",
+    }
+    method_key = method_map[method_label]
+
+    btn_disc = st.button("⚙️ Discretizza", key="btn_discretize", type="primary")
+
+    if btn_disc:
+        try:
+            result = discretize_tf(
+                info.num_expr, info.den_expr,
+                Ts_val=Ts_input,
+                method=method_key,
+            )
+            st.session_state.disc_result = result
+        except Exception as exc:
+            import logging
+            logging.error(f"Discretization error: {exc}", exc_info=True)
+            st.error(f"⚠️ Errore nella discretizzazione: {exc}")
+            st.session_state.disc_result = None
+
+    if st.session_state.get('disc_result') is not None:
+        result = st.session_state.disc_result
+        for step_text in result['steps']:
+            st.markdown(step_text)
+            st.markdown("---")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # 9. MAIN
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -1673,6 +2011,9 @@ def main() -> None:
     except Exception as exc:
         logging.error(f"Nyquist plot error: {exc}", exc_info=True)
         st.error("⚠️ Errore nella generazione del diagramma di Nyquist.")
+
+    # ── Discretizzazione C(s) → C(z) → u[k] ──────────────────────────────
+    render_discretization_section(info, dark_mode)
 
 
 # ---------------------------------------------------------------------------
