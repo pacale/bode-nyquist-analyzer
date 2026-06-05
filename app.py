@@ -71,83 +71,8 @@ _CURSOR_COLOR = "#e05252"
 _QUERY_COLOR  = "#2ecc71"
 
 # ── CSS temi ─────────────────────────────────────────────────────────────
-_DARK_CSS = """
-<style>
-/* === ROOT E BODY === */
-html, body, [data-testid="stAppViewContainer"],
-[data-testid="stAppViewBlockContainer"],
-[data-testid="block-container"],
-.stApp, .main, .main .block-container {
-    background-color: #0e1117 !important;
-    color: #e8e8f0 !important;
-}
-/* === HEADER === */
-header[data-testid="stHeader"],
-header[data-testid="stHeader"] * {
-    background-color: #0e1117 !important;
-}
-/* === SIDEBAR === */
-section[data-testid="stSidebar"],
-section[data-testid="stSidebar"] > div:first-child {
-    background-color: #12131f !important;
-    border-right: 1px solid #2a2a3e !important;
-}
-section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] span,
-section[data-testid="stSidebar"] div {
-    color: #c8c8d8 !important;
-}
-/* === METRIC === */
-[data-testid="stMetricValue"] { color: #7eb8f7 !important; font-size: 1.6rem !important; }
-[data-testid="stMetricLabel"] { color: #9999b8 !important; font-size: 0.78rem !important; }
-/* === INPUT === */
-.stTextInput input, .stTextInput textarea,
-[data-testid="stTextInput"] input,
-[data-testid="stNumberInput"] input {
-    background-color: #1c1e2e !important;
-    color: #e8e8f0 !important;
-    border: 1px solid #3a3a5c !important;
-    border-radius: 8px !important;
-}
-.stTextInput input:focus, [data-testid="stTextInput"] input:focus {
-    border-color: #5c6bc0 !important;
-    box-shadow: 0 0 0 2px rgba(92,107,192,0.3) !important;
-}
-/* === SELECT === */
-.stSelectbox select, [data-testid="stSelectbox"] * {
-    background-color: #1c1e2e !important;
-    color: #e8e8f0 !important;
-}
-/* === PULSANTE ANALIZZA === */
-.stButton > button[kind="primary"] {
-    background-color: #e05252 !important;
-    color: #ffffff !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-weight: 600 !important;
-}
-.stButton > button[kind="primary"]:hover {
-    background-color: #c04040 !important;
-    transform: translateY(-1px) !important;
-}
-/* === GRAFICI === */
-.stPlotlyChart, [data-testid="stPlotlyChart"] {
-    background-color: #0e1117 !important;
-    border-radius: 10px !important;
-}
-/* === TESTO === */
-p, h1, h2, h3, h4, label, .stMarkdown, .stCaption { color: #c8c8d8 !important; }
-hr { border-color: #2a2a3e !important; }
+# Solo tema chiaro attivo
 
-/* === ALERT/WARNING BOX === */
-[data-testid="stAlert"], div[role="alert"], .stAlert {
-    background-color: #1e2040 !important;
-    color: #c8c8e8 !important;
-    border-left: 4px solid #5c6bc0 !important;
-}
-</style>
-"""
 
 _LIGHT_CSS = """
 <style>
@@ -322,24 +247,15 @@ hr {
 # ---------------------------------------------------------------------------
 # Helper: applica tema Plotly ai grafici (Problema 2)
 # ---------------------------------------------------------------------------
-def applica_tema_plotly(fig: go.Figure, dark_mode: bool) -> go.Figure:
-    """Applica colori e font coerenti al tema scelto su ogni figura Plotly."""
-    if dark_mode:
-        bg       = "#0e1117"
-        paper_bg = "#13141f"
-        grid_col = "#1e1e32"
-        zeroline = "#2a2a4a"
-        font_col = "#c8c8d8"
-        spike_col = "#e05252"
-        template = "plotly_dark"
-    else:
-        bg       = "#ffffff"
-        paper_bg = "#f8f9fc"
-        grid_col = "#e8eaf0"
-        zeroline = "#c5cae9"
-        font_col = "#1a1a2e"
-        spike_col = "#e05252"
-        template = "plotly_white"
+def applica_tema_plotly(fig: go.Figure) -> go.Figure:
+    """Applica colori e font coerenti al tema chiaro su ogni figura Plotly."""
+    bg       = "#ffffff"
+    paper_bg = "#f8f9fc"
+    grid_col = "#e8eaf0"
+    zeroline = "#c5cae9"
+    font_col = "#1a1a2e"
+    spike_col = "#e05252"
+    template = "plotly_white"
 
     fig.update_layout(
         template=template,
@@ -1726,7 +1642,7 @@ def discretize_tf(num_expr_sym, den_expr_sym, Ts_val: float, method: str) -> dic
     }
 
 
-def render_discretization_section(info: SystemInfo, dark_mode: bool) -> None:
+def render_discretization_section(info: SystemInfo) -> None:
     """Renderizza la sezione UI di discretizzazione."""
     st.markdown("---")
     st.subheader("🔄 Discretizzazione C(s) → C(z) → u[k]")
@@ -1799,8 +1715,7 @@ def main() -> None:
             pass
         st.header("⚙️ Informazioni Sistema")
         
-        dark_mode = st.toggle("🌙 Modalità Scura", value=False)
-        plotly_template = "plotly_dark" if dark_mode else "plotly_white"
+        plotly_template = "plotly_white"
         
         st.divider()
         
@@ -1911,10 +1826,7 @@ def main() -> None:
     phase_in_radians = phase_unit == "rad"
 
     
-    if dark_mode:
-        st.markdown(_DARK_CSS, unsafe_allow_html=True)
-    else:
-        st.markdown(_LIGHT_CSS, unsafe_allow_html=True)
+    st.markdown(_LIGHT_CSS, unsafe_allow_html=True)
 
     analyze_clicked = st.button("🔍 Analizza", type="primary")
 
@@ -2009,7 +1921,7 @@ def main() -> None:
             phase_in_radians=phase_in_radians,
             cursor_omega=st.session_state.cursor_omega,
         )
-        bode_fig = applica_tema_plotly(bode_fig, dark_mode)
+        bode_fig = applica_tema_plotly(bode_fig)
         st.plotly_chart(bode_fig, width="stretch", config={"displaylogo": False})
     except Exception as exc:
         logging.error(f"Bode plot error: {exc}", exc_info=True)
@@ -2107,14 +2019,14 @@ def main() -> None:
             cursor_omega=st.session_state.cursor_omega,
             cursor_resp=cursor_resp_ny,
         )
-        nyquist_fig = applica_tema_plotly(nyquist_fig, dark_mode)
+        nyquist_fig = applica_tema_plotly(nyquist_fig)
         st.plotly_chart(nyquist_fig, width="stretch", config={"displaylogo": False})
     except Exception as exc:
         logging.error(f"Nyquist plot error: {exc}", exc_info=True)
         st.error("⚠️ Errore nella generazione del diagramma di Nyquist.")
 
     # ── Discretizzazione C(s) → C(z) → u[k] ──────────────────────────────
-    render_discretization_section(info, dark_mode)
+    render_discretization_section(info)
 
 
 # ---------------------------------------------------------------------------
