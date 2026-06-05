@@ -24,11 +24,37 @@ from plotly.subplots import make_subplots  # type: ignore
 # ---------------------------------------------------------------------------
 # Configurazione pagina (deve essere il primo comando Streamlit)
 # ---------------------------------------------------------------------------
+import os
+from PIL import Image
+
+logo_path = "logo.png"
+if not os.path.exists(logo_path):
+    # Cerca nella cartella superiore
+    parent_logo = os.path.join("..", "logo.png")
+    if os.path.exists(parent_logo):
+        logo_path = parent_logo
+    else:
+        # Cerca rispetto alla cartella dello script
+        script_dir = os.path.dirname(__file__)
+        script_logo = os.path.join(script_dir, "logo.png")
+        if os.path.exists(script_logo):
+            logo_path = script_logo
+        else:
+            parent_script_logo = os.path.join(script_dir, "..", "logo.png")
+            if os.path.exists(parent_script_logo):
+                logo_path = parent_script_logo
+
+try:
+    logo_img = Image.open(logo_path)
+except Exception:
+    logo_img = "📈"
+
 st.set_page_config(
     page_title="Analizzatore Bode & Nyquist",
-    page_icon="📈",
+    page_icon=logo_img,
     layout="wide",
 )
+
 
 warnings.filterwarnings("ignore")
 
@@ -1767,6 +1793,10 @@ def main() -> None:
     """Punto di ingresso principale dell'applicazione."""
 
     with st.sidebar:
+        try:
+            st.image(logo_path, width=120)
+        except Exception:
+            pass
         st.header("⚙️ Informazioni Sistema")
         
         dark_mode = st.toggle("🌙 Modalità Scura", value=False)
@@ -1806,7 +1836,19 @@ def main() -> None:
         else:
             st.info("Inserisci i coefficienti e premi Analizza")
 
-    st.title("📈 Analizzatore Interattivo Bode & Nyquist")
+    # Logo e Titolo in alto allineati
+    logo_col, title_col = st.columns([1, 8])
+    with logo_col:
+        try:
+            st.image(logo_path, width="stretch")
+        except Exception:
+            st.markdown("## 📈")
+    with title_col:
+        st.markdown(
+            "<h1 style='margin-top: 0px; margin-bottom: 0px;'>Analizzatore Interattivo Bode & Nyquist</h1>",
+            unsafe_allow_html=True
+        )
+    
     st.markdown(
         "Inserisci il **numeratore** e il **denominatore** di G(s) qui sotto, "
         "poi premi **Analizza**."
@@ -1968,7 +2010,7 @@ def main() -> None:
             cursor_omega=st.session_state.cursor_omega,
         )
         bode_fig = applica_tema_plotly(bode_fig, dark_mode)
-        st.plotly_chart(bode_fig, use_container_width=True, config={"displaylogo": False})
+        st.plotly_chart(bode_fig, width="stretch", config={"displaylogo": False})
     except Exception as exc:
         logging.error(f"Bode plot error: {exc}", exc_info=True)
         st.error("⚠️ Errore nella generazione del diagramma di Bode.")
@@ -2066,7 +2108,7 @@ def main() -> None:
             cursor_resp=cursor_resp_ny,
         )
         nyquist_fig = applica_tema_plotly(nyquist_fig, dark_mode)
-        st.plotly_chart(nyquist_fig, use_container_width=True, config={"displaylogo": False})
+        st.plotly_chart(nyquist_fig, width="stretch", config={"displaylogo": False})
     except Exception as exc:
         logging.error(f"Nyquist plot error: {exc}", exc_info=True)
         st.error("⚠️ Errore nella generazione del diagramma di Nyquist.")
