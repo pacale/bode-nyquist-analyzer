@@ -913,65 +913,115 @@ def plot_nyquist(
     cursor_omega: Optional[float] = None,
     cursor_resp: Optional[complex] = None,
 ) -> go.Figure:
-    """Diagramma polare (solo esatto)."""
-    re_e, im_e = resp.real, resp.imag
+    """Diagramma polare completo (ω > 0 e ω < 0 specchiato)."""
+    re_pos = resp.real
+    im_pos = resp.imag
+    # Ramo ω < 0: complesso coniugato (specchiato rispetto asse reale)
+    re_neg = resp.real
+    im_neg = -resp.imag
+
+    _NEG_COLOR = "#b07be0"  # viola per il ramo ω < 0
 
     fig = go.Figure()
 
-    # Traccia esatta
+    # ── Ramo ω > 0 (traccia principale) ───────────────────────────────────
     fig.add_trace(go.Scatter(
-        x=re_e, y=im_e, mode="lines", name="Nyquist Esatto",
+        x=re_pos, y=im_pos, mode="lines",
+        name="ω > 0",
         line=dict(color=_EXACT_COLOR, width=_EXACT_WIDTH),
-        hovertemplate="Re: %{x:.4f}<br>Im: %{y:.4f}<extra></extra>",
+        hovertemplate="Re: %{x:.4f}<br>Im: %{y:.4f}<extra>ω > 0</extra>",
     ))
 
-    # Frecce direzionali ogni 50 punti sulla traccia esatta
-    step = 50
+    # ── Ramo ω < 0 (specchiato) ───────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=re_neg, y=im_neg, mode="lines",
+        name="ω < 0",
+        line=dict(color=_NEG_COLOR, width=_APPROX_WIDTH, dash="dash"),
+        hovertemplate="Re: %{x:.4f}<br>Im: %{y:.4f}<extra>ω < 0</extra>",
+    ))
+
+    # ── Frecce direzionali ramo ω > 0 ─────────────────────────────────────
+    step = max(1, len(omega) // 15)
     for idx in range(step, len(omega) - 1, step):
-        dx = re_e[idx + 1] - re_e[idx]
-        dy = im_e[idx + 1] - im_e[idx]
+        dx = re_pos[idx + 1] - re_pos[idx]
+        dy = im_pos[idx + 1] - im_pos[idx]
         fig.add_annotation(
-            x=re_e[idx], y=im_e[idx],
-            ax=re_e[idx] - dx * 8,
-            ay=im_e[idx] - dy * 8,
+            x=re_pos[idx], y=im_pos[idx],
+            ax=re_pos[idx] - dx * 8,
+            ay=im_pos[idx] - dy * 8,
             xref="x", yref="y", axref="x", ayref="y",
             showarrow=True,
             arrowhead=2, arrowsize=1.5,
             arrowwidth=1.5, arrowcolor=_EXACT_COLOR,
         )
 
-    # Inizio (ω → 0)
+    # ── Frecce direzionali ramo ω < 0 ─────────────────────────────────────
+    for idx in range(step, len(omega) - 1, step):
+        dx = re_neg[idx + 1] - re_neg[idx]
+        dy = im_neg[idx + 1] - im_neg[idx]
+        fig.add_annotation(
+            x=re_neg[idx], y=im_neg[idx],
+            ax=re_neg[idx] - dx * 8,
+            ay=im_neg[idx] - dy * 8,
+            xref="x", yref="y", axref="x", ayref="y",
+            showarrow=True,
+            arrowhead=2, arrowsize=1.2,
+            arrowwidth=1.2, arrowcolor=_NEG_COLOR,
+        )
+
+    # ── Marker di inizio e fine ───────────────────────────────────────────
+    # ω → 0+ (inizio ramo positivo)
     fig.add_trace(go.Scatter(
-        x=[re_e[0]], y=[im_e[0]],
+        x=[re_pos[0]], y=[im_pos[0]],
         mode="markers+text",
-        marker=dict(color="green", size=12, symbol="circle"),
-        text=["ω→0"], textposition="top right",
-        textfont=dict(size=13, color="green"),
-        name="ω→0",
+        marker=dict(color="#2ecc71", size=12, symbol="circle"),
+        text=["ω→0⁺"], textposition="top right",
+        textfont=dict(size=13, color="#2ecc71"),
+        name="ω→0⁺",
+    ))
+    # ω → 0⁻ (inizio ramo negativo, coniugato)
+    fig.add_trace(go.Scatter(
+        x=[re_neg[0]], y=[im_neg[0]],
+        mode="markers+text",
+        marker=dict(color="#27ae60", size=10, symbol="diamond"),
+        text=["ω→0⁻"], textposition="bottom right",
+        textfont=dict(size=12, color="#27ae60"),
+        name="ω→0⁻",
     ))
 
-    # Fine (ω → +∞)
+    # ω → +∞
     fig.add_trace(go.Scatter(
-        x=[re_e[-1]], y=[im_e[-1]],
+        x=[re_pos[-1]], y=[im_pos[-1]],
         mode="markers+text",
-        marker=dict(color="red", size=12, symbol="square"),
+        marker=dict(color="#e74c3c", size=12, symbol="square"),
         text=["ω→+∞"], textposition="top right",
-        textfont=dict(size=13, color="red"),
+        textfont=dict(size=13, color="#e74c3c"),
         name="ω→+∞",
     ))
+    # ω → -∞
+    fig.add_trace(go.Scatter(
+        x=[re_neg[-1]], y=[im_neg[-1]],
+        mode="markers+text",
+        marker=dict(color="#c0392b", size=10, symbol="square"),
+        text=["ω→-∞"], textposition="bottom right",
+        textfont=dict(size=12, color="#c0392b"),
+        name="ω→-∞",
+    ))
 
-    # Punto critico (−1, 0)
+    # ── Punto critico (−1, 0) ─────────────────────────────────────────────
     fig.add_trace(go.Scatter(
         x=[-1], y=[0],
         mode="markers+text",
-        marker=dict(color="black", size=12, symbol="x"),
+        marker=dict(color=_CRITICAL_COLOR, size=14, symbol="x",
+                     line=dict(width=2, color=_CRITICAL_COLOR)),
         text=["(-1, 0)"], textposition="bottom right",
-        textfont=dict(size=11, color="black"),
+        textfont=dict(size=11, color=_CRITICAL_COLOR),
         name="Punto critico (−1, 0)",
     ))
 
-    # Cursore frequenza
+    # ── Cursore frequenza ─────────────────────────────────────────────────
     if cursor_resp is not None and cursor_omega is not None:
+        # Punto sul ramo ω > 0
         fig.add_trace(go.Scatter(
             x=[cursor_resp.real], y=[cursor_resp.imag],
             mode="markers+text",
@@ -980,6 +1030,15 @@ def plot_nyquist(
             textposition="top right",
             textfont=dict(size=11, color=_CURSOR_COLOR),
             name=f"ω = {cursor_omega:.4g} rad/s",
+        ))
+        # Punto simmetrico sul ramo ω < 0
+        fig.add_trace(go.Scatter(
+            x=[cursor_resp.real], y=[-cursor_resp.imag],
+            mode="markers",
+            marker=dict(color=_CURSOR_COLOR, size=10, symbol="circle-open",
+                         line=dict(width=2, color=_CURSOR_COLOR)),
+            name=f"ω = −{cursor_omega:.4g} rad/s",
+            showlegend=False,
         ))
 
     fig.update_layout(
