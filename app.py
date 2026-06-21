@@ -69,6 +69,10 @@ _EXACT_WIDTH  = 2.0
 _APPROX_WIDTH = 1.5
 _CURSOR_COLOR = "#e05252"
 _QUERY_COLOR  = "#2ecc71"
+_MARGIN_PHASE_COLOR = "#2ecc71"   # verde per margine di fase
+_MARGIN_GAIN_COLOR  = "#e74c3c"   # rosso per margine di ampiezza
+_WC_COLOR  = "#2ecc71"            # verde per ωc
+_WPI_COLOR = "#e74c3c"            # rosso per ωπ
 
 # ── CSS temi ─────────────────────────────────────────────────────────────
 # Solo tema chiaro attivo
@@ -168,8 +172,14 @@ div[data-baseweb="textarea"] textarea {
 }
 
 /* === SELECT/DROPDOWN === */
-div[data-baseweb="select"] *,
-.stSelectbox * {
+div[data-baseweb="select"] > div {
+    background-color: #ffffff !important;
+    color: #1a1a2e !important;
+}
+div[data-baseweb="popover"] div,
+div[data-baseweb="popover"] ul,
+div[data-baseweb="popover"] li,
+div[data-baseweb="popover"] span {
     background-color: #ffffff !important;
     color: #1a1a2e !important;
 }
@@ -306,6 +316,7 @@ class SystemInfo:
     system_type: int
     static_gain: Optional[float]
     tf: ctrl.TransferFunction
+    time_delay: float = 0.0
     break_freqs_zeros: list[float] = field(default_factory=list)
     break_freqs_poles: list[float] = field(default_factory=list)
 
@@ -367,19 +378,21 @@ def parse_transfer_function(latex_num: str, latex_den: str) -> SystemInfo:
     s = symbols("s")
     num_expr = _parse_single_expr(latex_num, s)
     den_expr = _parse_single_expr(latex_den, s)
-    try:
-        num_poly = Poly(num_expr.expand(), s)
-        den_poly = Poly(den_expr.expand(), s)
-        num_coeffs = [float(c) for c in num_poly.all_coeffs()]
-        den_coeffs = [float(c) for c in den_poly.all_coeffs()]
-    except Exception as e:
-        raise ValueError(
-            f"Impossibile costruire la funzione di trasferimento. "
-            f"Verifica che il risultato sia un polinomio razionale in s. "
-            f"Dettaglio: {e}"
-        )
         
     expr = num_expr / den_expr
+    
+    # --- Estrazione Ritardo di Tempo (Time Delay) ---
+    time_delay = 0.0
+    for arg in expr.atoms(sympy.exp):
+        exponent = arg.args[0]
+        if s in exponent.free_symbols:
+            coeff = exponent.coeff(s)
+            if coeff.is_number:
+                # exp(-tau * s) -> coeff = -tau -> delay = -coeff
+                time_delay -= float(coeff)
+                expr = expr.subs(arg, 1)
+                
+    # Ricalcola numeratore e denominatore senza il ritardo
     num_expr, den_expr = sympy.fraction(sympy.cancel(expr))
 
     # Usa all_roots() per preservare la molteplicità dei poli/zeri
@@ -430,6 +443,7 @@ def parse_transfer_function(latex_num: str, latex_den: str) -> SystemInfo:
         system_type=system_type,
         static_gain=static_gain,
         tf=tf,
+        time_delay=time_delay,
         break_freqs_zeros=bz,
         break_freqs_poles=bp,
     )
@@ -487,9 +501,11 @@ def compute_approximated_bode(
     
     # Separa poli e zeri nell'origine
     tol = 1e-8
-    z_origin = np.sum(np.abs(zeros) < tol)
-    p_origin = np.sum(np.abs(poles) < tol)
-    g = z_origin - p_origin
+    z_origin = int(np.sum(np.abs(zeros) < tol))
+    p_origin = int(np.sum(np.abs(poles) < tol))
+    # g = tipo del sistema (poli nell'origine − zeri nell'origine)
+    # Nella forma G(s) = K_b / s^g · ..., g è il numero NETTO di poli nell'origine
+    g = p_origin - z_origin
     
     zeros_fin = zeros[np.abs(zeros) >= tol]
     poles_fin = poles[np.abs(poles) >= tol]
@@ -539,7 +555,8 @@ def compute_approximated_bode(
     K_b_real = float(K_b.real)  # la parte immaginaria è ~0 per sistemi reali
     K_bode_abs = abs(K_b_real)
     
-    mag_dB = 20 * np.log10(max(K_bode_abs, 1e-30)) + g * 20 * np.log10(omega)
+    # Pendenza iniziale: −g·20 dB/dec (per poli nell'origine g>0 → pendenza negativa)
+    mag_dB = 20 * np.log10(max(K_bode_abs, 1e-30)) - g * 20 * np.log10(omega)
     
     breakpoints.sort(key=lambda x: x[1])
     for tipo, wr, _ in breakpoints:
@@ -555,13 +572,14 @@ def compute_approximated_bode(
         mask = omega > wr
         mag_dB[mask] += slope * np.log10(omega[mask] / wr)
     
-    # ── Fase iniziale ─────────────────────────────────────────────────────
-    # G(s) ~ K_b * s^g  per ω → 0
-    # arg(G(jω)) = arg(K_b) + g * arg(jω) = arg(K_b) + g * 90°
-    # + 180° se K_b < 0 (segno negativo del guadagno)
-    phase_deg = np.full(len(omega), float(g * 90.0))
+    # ── Fase iniziale (Basile-Chiacchio) ────────────────────────────────────
+    # G(s) = K_b / s^g · ...  →  per ω → 0+:
+    #   fase da 1/s^g  →  −g · 90°
+    #   fase da K_b < 0  →  −180°  (angolo di un numero reale negativo)
+    phase_init = float(-g * 90.0)
     if K_b_real < 0:
-        phase_deg += 180.0
+        phase_init -= 180.0
+    phase_deg = np.full(len(omega), phase_init)
     
     # ── Delta fase per ogni breakpoint ────────────────────────────────────
     # Fattore LHP (1+s/wr): arg va 0 → +90°, contributo a G = -90° (polo) o +90° (zero)
@@ -625,6 +643,7 @@ def plot_bode(
     info: SystemInfo,
     phase_in_radians: bool = False,
     cursor_omega: Optional[float] = None,
+    margins: Optional[dict] = None,
 ) -> go.Figure:
     """Due sottografi impilati: modulo (dB) e fase."""
     fig = make_subplots(
@@ -708,6 +727,118 @@ def plot_bode(
         legendgroup="approx", showlegend=False,
     ), row=2, col=1)
 
+    # ── Linee guida ────────────────────────────────────────────────────────
+    line_180_y = -1.0 if phase_in_radians else -180.0
+    
+    # ── Linea orizzontale di riferimento a 0 dB sul grafico del modulo ────
+    fig.add_hline(
+        y=0, line_width=1, line_dash="dot", line_color="#888",
+        annotation_text="0 dB", annotation_position="right",
+        annotation_font_size=10, annotation_font_color="#888",
+        row=1, col=1,
+    )
+
+    # ── Marker e segmenti per margini di stabilità ────────────────────────
+    if margins is not None:
+        omega_c_val = margins["omega_gc"][0] if margins["omega_gc"] else None
+        omega_pi_val = margins["omega_pc"][0] if margins["omega_pc"] else None
+        pm_val = margins["PM_deg"]
+        gm_val = margins["GM_dB"]
+        touches_pi = bool(margins.get("omega_pc", []))
+
+        # ωc: marker + segmento margine di fase
+        if omega_c_val is not None:
+            # Marker ωc sul modulo (a 0 dB)
+            fig.add_trace(go.Scatter(
+                x=[omega_c_val], y=[0],
+                mode="markers+text",
+                marker=dict(color=_WC_COLOR, size=12, symbol="diamond"),
+                text=[f"ωc = {omega_c_val:.4g}"], textposition="top center",
+                textfont=dict(size=10, color=_WC_COLOR),
+                name="ωc (crossover 0 dB)",
+                showlegend=True,
+            ), row=1, col=1)
+
+            # Linea verticale tratteggiata a ωc
+            for row in (1, 2):
+                fig.add_vline(
+                    x=omega_c_val, line_width=1, line_dash="dash",
+                    line_color=_WC_COLOR, row=row, col=1,
+                )
+
+            # Segmento margine di fase (sulla fase, da ∠G(jωc) a −180°)
+            if pm_val is not None and touches_pi:
+                phase_at_wc = float(np.interp(
+                    np.log10(omega_c_val), np.log10(omega), phase_deg
+                ))
+                y_phase_wc = phase_at_wc / 180.0 if phase_in_radians else phase_at_wc
+
+                fig.add_trace(go.Scatter(
+                    x=[omega_c_val, omega_c_val],
+                    y=[y_phase_wc, line_180_y],
+                    mode="lines+text",
+                    line=dict(color=_MARGIN_PHASE_COLOR, width=3),
+                    text=[f"mφ = {pm_val:.1f}°", ""],
+                    textposition="middle right",
+                    textfont=dict(size=11, color=_MARGIN_PHASE_COLOR),
+                    name=f"Margine di fase ({pm_val:.1f}°)",
+                    showlegend=True,
+                ), row=2, col=1)
+
+                # Marker sulla fase a ωc
+                fig.add_trace(go.Scatter(
+                    x=[omega_c_val], y=[y_phase_wc],
+                    mode="markers",
+                    marker=dict(color=_WC_COLOR, size=10, symbol="circle"),
+                    showlegend=False,
+                ), row=2, col=1)
+
+        # ωπ: marker + segmento margine di ampiezza
+        if omega_pi_val is not None:
+            # Marker ωπ sulla fase (a −180°)
+            fig.add_trace(go.Scatter(
+                x=[omega_pi_val], y=[line_180_y],
+                mode="markers+text",
+                marker=dict(color=_WPI_COLOR, size=12, symbol="diamond"),
+                text=[f"ωπ = {omega_pi_val:.4g}"], textposition="top center",
+                textfont=dict(size=10, color=_WPI_COLOR),
+                name="ωπ (crossover −180°)",
+                showlegend=True,
+            ), row=2, col=1)
+
+            # Linea verticale tratteggiata a ωπ
+            for row in (1, 2):
+                fig.add_vline(
+                    x=omega_pi_val, line_width=1, line_dash="dash",
+                    line_color=_WPI_COLOR, row=row, col=1,
+                )
+
+            # Segmento margine di ampiezza (sul modulo, da |G(jωπ)|_dB a 0 dB)
+            if gm_val is not None:
+                mag_at_wpi = float(np.interp(
+                    np.log10(omega_pi_val), np.log10(omega), mag_db
+                ))
+
+                fig.add_trace(go.Scatter(
+                    x=[omega_pi_val, omega_pi_val],
+                    y=[mag_at_wpi, 0],
+                    mode="lines+text",
+                    line=dict(color=_MARGIN_GAIN_COLOR, width=3),
+                    text=[f"mA = {gm_val:.1f} dB", ""],
+                    textposition="middle right",
+                    textfont=dict(size=11, color=_MARGIN_GAIN_COLOR),
+                    name=f"Margine di ampiezza ({gm_val:.1f} dB)",
+                    showlegend=True,
+                ), row=1, col=1)
+
+                # Marker sul modulo a ωπ
+                fig.add_trace(go.Scatter(
+                    x=[omega_pi_val], y=[mag_at_wpi],
+                    mode="markers",
+                    marker=dict(color=_WPI_COLOR, size=10, symbol="circle"),
+                    showlegend=False,
+                ), row=1, col=1)
+
     # ── Annotazioni verticali alle frequenze di rottura ───────────────────
     all_breaks = sorted(
         set(info.break_freqs_zeros) | set(info.break_freqs_poles),
@@ -768,12 +899,12 @@ def plot_bode(
         row=2, col=1,
     )
 
-    # Y modulo: auto-range basato sul minimo/massimo di entrambe le curve
-    y_mag_min = float(min(np.nanmin(mag_db), np.nanmin(approx_mag_db)))
-    y_mag_max = float(max(np.nanmax(mag_db), np.nanmax(approx_mag_db)))
+    # Y modulo: auto-range; assicura che 0 dB sia sempre visibile
+    y_mag_min = float(min(np.nanmin(mag_db), np.nanmin(approx_mag_db), 0))
+    y_mag_max = float(max(np.nanmax(mag_db), np.nanmax(approx_mag_db), 0))
     fig.update_yaxes(
         title_text="Modulo (dB)",
-        range=[y_mag_min - 5, y_mag_max + 5],
+        range=[y_mag_min - 15, y_mag_max + 15],
         showspikes=True, spikecolor="gray", spikethickness=1, spikedash="dot",
         row=1, col=1,
     )
@@ -781,6 +912,11 @@ def plot_bode(
     # Y fase
     ph_min = float(min(np.nanmin(exact_phase_plot), np.nanmin(approx_phase_plot)))
     ph_max = float(max(np.nanmax(exact_phase_plot), np.nanmax(approx_phase_plot)))
+    # Assicura che −180° sia sempre visibile nel range
+    if phase_in_radians:
+        ph_min = min(ph_min, -1.0)
+    else:
+        ph_min = min(ph_min, -180.0)
 
     if phase_in_radians:
         tickvals = [
@@ -852,6 +988,7 @@ def plot_nyquist(
     plotly_template: str,
     omega: np.ndarray,
     resp: np.ndarray,
+    info: 'SystemInfo',
     cursor_omega: Optional[float] = None,
     cursor_resp: Optional[complex] = None,
 ) -> go.Figure:
@@ -910,6 +1047,55 @@ def plot_nyquist(
             arrowhead=2, arrowsize=1.2,
             arrowwidth=1.2, arrowcolor=_NEG_COLOR,
         )
+
+    # ── Archi all'infinito per sistemi con poli nell'origine (g > 0) ──────
+    g = info.system_type
+    if g > 0:
+        # Raggio grande per la visualizzazione
+        max_re = max(np.max(np.abs(re_pos)), 1.0)
+        max_im = max(np.max(np.abs(im_pos)), 1.0)
+        R = float(max(max_re, max_im)) * 1.5
+        
+        # L'arco all'infinito connette ω → 0- a ω → 0+
+        # sul contorno di Nyquist il semicerchio salta l'origine
+        # da -90° a +90° in senso antiorario nel piano s.
+        # G(s) ≈ K / s^g, quindi s = r e^(jθ), θ ∈ [-π/2, π/2]
+        # G(s) ≈ (K/r^g) e^(-j g θ)
+        # Angolo iniziale (ω → 0-): θ = -π/2  →  fase G = +g π/2
+        # Angolo finale (ω → 0+):   θ = +π/2  →  fase G = -g π/2
+        # Senso orario nel piano G(s)
+        
+        theta_start = g * np.pi / 2
+        theta_end = -g * np.pi / 2
+        
+        # Genera punti lungo l'arco
+        # Usiamo np.linspace che include gli estremi, senso orario (start > end)
+        theta_inf = np.linspace(theta_start, theta_end, 100)
+        
+        re_inf = R * np.cos(theta_inf)
+        im_inf = R * np.sin(theta_inf)
+        
+        fig.add_trace(go.Scatter(
+            x=re_inf, y=im_inf, mode="lines",
+            name="Arco all'∞ (ω ≈ 0)",
+            line=dict(color="#f39c12", width=2, dash="dashdot"),
+            hovertemplate="Arco ∞<br>Re: %{x:.2f}<br>Im: %{y:.2f}<extra></extra>",
+        ))
+        
+        # Freccia al centro dell'arco
+        mid_idx = len(theta_inf) // 2
+        dx = re_inf[mid_idx+1] - re_inf[mid_idx]
+        dy = im_inf[mid_idx+1] - im_inf[mid_idx]
+        fig.add_annotation(
+            x=re_inf[mid_idx], y=im_inf[mid_idx],
+            ax=re_inf[mid_idx] - dx * 8,
+            ay=im_inf[mid_idx] - dy * 8,
+            xref="x", yref="y", axref="x", ayref="y",
+            showarrow=True,
+            arrowhead=2, arrowsize=1.5,
+            arrowwidth=1.5, arrowcolor="#f39c12",
+        )
+
 
     # ── Marker di inizio e fine ───────────────────────────────────────────
     # ω → 0+ (inizio ramo positivo)
@@ -1234,11 +1420,25 @@ def _format_roots(roots: list[complex], st_container, label_prefix: str):
             else:
                 st_container.metric(f"{label_prefix} {i+1}", f"{val:.4f}")
 
-def compute_stability_margins(sys_tf, omega: np.ndarray) -> dict:
+def compute_stability_margins(sys_tf, omega: np.ndarray, info: 'SystemInfo' = None) -> dict:
+    """Calcola i margini di stabilità con interpolazione logaritmica.
+    
+    Ritorna un dizionario con:
+    - omega_gc: lista di ωc (crossover di guadagno, |G| = 0 dB)
+    - omega_pc: lista di ωπ (crossover di fase, ∠G = −180°)
+    - GM_dB: margine di ampiezza in dB (None = ∞)
+    - PM_deg: margine di fase in gradi (None = ∞)
+    - stabile: True/False/None
+    - bode_applicable: True se il criterio di Bode è applicabile
+    - bode_reason: motivazione
+    - N_encirclements: giri Nyquist attorno a (-1, 0)
+    - P_unstable: poli a parte reale positiva
+    - nyquist_stable: stabilità secondo Nyquist
+    """
     import control
     freq_resp = control.frequency_response(sys_tf, omega)
     mag = np.abs(freq_resp.fresp.squeeze())
-    phase_deg = np.angle(freq_resp.fresp.squeeze(), deg=True)
+    phase_deg = np.unwrap(np.angle(freq_resp.fresp.squeeze(), deg=False)) * 180.0 / np.pi
     mag_dB = 20 * np.log10(np.where(mag > 0, mag, 1e-12))
 
     result = {
@@ -1247,35 +1447,112 @@ def compute_stability_margins(sys_tf, omega: np.ndarray) -> dict:
         "GM_dB":    None,
         "PM_deg":   None,
         "stabile":  None,
+        "bode_applicable": True,
+        "bode_reason": "",
+        "N_encirclements": 0,
+        "P_unstable": 0,
+        "nyquist_stable": None,
     }
 
+    # ── ωc: crossover di guadagno (|G| = 0 dB) con interpolazione logaritmica ──
     for i in range(len(mag_dB) - 1):
-        if mag_dB[i] * mag_dB[i+1] <= 0:
-            ogc = float(np.interp(0, [mag_dB[i], mag_dB[i+1]],
-                                     [omega[i], omega[i+1]]))
+        if mag_dB[i] * mag_dB[i+1] <= 0 and mag_dB[i] != mag_dB[i+1]:
+            # Interpolazione lineare in dB, logaritmica in ω
+            t = (0.0 - mag_dB[i]) / (mag_dB[i+1] - mag_dB[i])
+            log_wc = np.log(omega[i]) + t * (np.log(omega[i+1]) - np.log(omega[i]))
+            ogc = float(np.exp(log_wc))
             result["omega_gc"].append(ogc)
 
-    phase_shifted = phase_deg + 180
+    # ── ωπ: crossover di fase (∠G = −180°) con interpolazione logaritmica ──
+    phase_shifted = phase_deg + 180.0
     for i in range(len(phase_shifted) - 1):
-        if phase_shifted[i] * phase_shifted[i+1] <= 0:
-            opc = float(np.interp(0, [phase_shifted[i], phase_shifted[i+1]],
-                                     [omega[i], omega[i+1]]))
+        if phase_shifted[i] * phase_shifted[i+1] <= 0 and phase_shifted[i] != phase_shifted[i+1]:
+            t = (0.0 - phase_shifted[i]) / (phase_shifted[i+1] - phase_shifted[i])
+            log_wpc = np.log(omega[i]) + t * (np.log(omega[i+1]) - np.log(omega[i]))
+            opc = float(np.exp(log_wpc))
             result["omega_pc"].append(opc)
 
+    # ── Margine di fase: mφ = 180° + ∠G(jωc) ──
     if result["omega_gc"]:
-        result["PM_deg"] = float(
-            np.interp(result["omega_gc"][0], omega, phase_deg)
-        ) + 180.0
+        phase_at_wc = float(np.interp(
+            np.log10(result["omega_gc"][0]), np.log10(omega), phase_deg
+        ))
+        result["PM_deg"] = 180.0 + phase_at_wc
+    # Se ωc non esiste, PM = ∞ (None)
 
+    # ── Margine di ampiezza: mA = −|G(jωπ)|_dB ──
     if result["omega_pc"]:
-        result["GM_dB"] = -float(
-            np.interp(result["omega_pc"][0], omega, mag_dB)
-        )
+        mag_at_wpc = float(np.interp(
+            np.log10(result["omega_pc"][0]), np.log10(omega), mag_dB
+        ))
+        result["GM_dB"] = -mag_at_wpc
+    # Se ωπ non esiste, GM = ∞ (None)
 
-    gm_ok = result["GM_dB"] > 0 if result["GM_dB"] is not None else None
-    pm_ok = result["PM_deg"] > 0 if result["PM_deg"] is not None else None
-    if gm_ok is not None and pm_ok is not None:
+    # ── Criterio di Bode: verifica applicabilità ──
+    if info is not None:
+        # 1. Nessun polo a parte reale positiva
+        n_unstable = sum(1 for p in info.poles if p.real > 1e-10)
+        result["P_unstable"] = n_unstable
+        if n_unstable > 0:
+            result["bode_applicable"] = False
+            result["bode_reason"] = (
+                f"Non applicabile: {n_unstable} polo/i a parte reale positiva."
+            )
+        
+        # 2. K_b > 0 (calcolato internamente)
+        if result["bode_applicable"]:
+            K_num = float(info.num_coeffs[0]) if info.num_coeffs else 1.0
+            K_den = float(info.den_coeffs[0]) if info.den_coeffs else 1.0
+            K_b_complex = complex(K_num / K_den)
+            for z in info.zeros:
+                if abs(z) > 1e-8: K_b_complex *= (-z)
+            for p in info.poles:
+                if abs(p) > 1e-8: K_b_complex /= (-p)
+            K_b = float(K_b_complex.real)
+            if K_b < 0:
+                result["bode_applicable"] = False
+                result["bode_reason"] = "Non applicabile: guadagno di Bode K_b < 0."
+        
+        # 3. Unicità dell'intersezione a 0 dB
+        if result["bode_applicable"] and len(result["omega_gc"]) > 1:
+            result["bode_applicable"] = False
+            result["bode_reason"] = (
+                f"Non applicabile: {len(result['omega_gc'])} intersezioni con 0 dB "
+                f"(richiesta unicità)."
+            )
+
+    # ── Stabilità secondo Bode ──
+    if result["bode_applicable"]:
+        gm_ok = result["GM_dB"] is None or result["GM_dB"] > 0
+        pm_ok = result["PM_deg"] is None or result["PM_deg"] > 0
         result["stabile"] = gm_ok and pm_ok
+        if result["stabile"]:
+            result["bode_reason"] = "Stabile (mφ > 0, mA > 0 dB)."
+        else:
+            parts = []
+            if result["PM_deg"] is not None and result["PM_deg"] <= 0:
+                parts.append(f"mφ = {result['PM_deg']:.2f}° ≤ 0")
+            if result["GM_dB"] is not None and result["GM_dB"] <= 0:
+                parts.append(f"mA = {result['GM_dB']:.2f} dB ≤ 0")
+            result["bode_reason"] = "Instabile: " + ", ".join(parts) + "."
+
+    # ── Criterio di Nyquist: conteggio giri ──
+    if info is not None:
+        resp_full = freq_resp.fresp.squeeze()
+        ref = -1.0 + 0j
+        # Percorso completo: ω > 0 poi coniugato per ω < 0
+        path_pos = resp_full - ref
+        path_neg = np.conj(resp_full[::-1]) - ref
+        full_path = np.concatenate([path_pos, path_neg])
+        
+        angles = np.angle(full_path)
+        d_angles = np.diff(np.unwrap(angles))
+        winding = np.sum(d_angles) / (2 * np.pi)
+        N = int(np.round(winding))
+        
+        result["N_encirclements"] = N
+        P = result["P_unstable"]
+        result["nyquist_stable"] = (N == P)
 
     return result
 
@@ -1312,70 +1589,95 @@ def _show_sidebar_info(info: SystemInfo, omega: np.ndarray) -> None:
     segno = "−" if K_b < 0 else "+"
     st.sidebar.metric("Costante di Bode |K_b|", f"{abs(K_b):.4f}")
     if K_b < 0:
-        st.sidebar.caption("K_b < 0 → sfasamento iniziale di +180° incluso nella fase")
+        st.sidebar.caption("K_b < 0 → sfasamento iniziale di −180° incluso nella fase")
 
-    margins = compute_stability_margins(info.tf, omega)
+    margins = compute_stability_margins(info.tf, omega, info)
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📐 Stabilità")
 
     if margins["GM_dB"] is not None:
         st.sidebar.metric(
-            label="Margine di Guadagno",
+            label="Margine di Ampiezza (mA)",
             value=f"{margins['GM_dB']:.2f} dB",
             delta="stabile" if margins["GM_dB"] > 0 else "instabile",
             delta_color="normal" if margins["GM_dB"] > 0 else "inverse"
         )
     else:
-        st.sidebar.metric("Margine di Guadagno", "∞")
+        st.sidebar.metric("Margine di Ampiezza (mA)", "∞")
+        st.sidebar.caption("ωπ non esiste → mA = ∞")
 
-    if margins["PM_deg"] is not None:
-        st.sidebar.metric(
-            label="Margine di Fase",
-            value=f"{margins['PM_deg']:.2f}°",
-            delta="stabile" if margins["PM_deg"] > 0 else "instabile",
-            delta_color="normal" if margins["PM_deg"] > 0 else "inverse"
-        )
+    touches_pi = bool(margins.get("omega_pc", []))
+    if touches_pi:
+        if margins["PM_deg"] is not None:
+            st.sidebar.metric(
+                label="Margine di Fase (mφ)",
+                value=f"{margins['PM_deg']:.2f}°",
+                delta="stabile" if margins["PM_deg"] > 0 else "instabile",
+                delta_color="normal" if margins["PM_deg"] > 0 else "inverse"
+            )
+        else:
+            st.sidebar.metric("Margine di Fase (mφ)", "∞")
+            st.sidebar.caption("ωc non esiste → mφ = ∞")
     else:
-        st.sidebar.metric("Margine di Fase", "∞")
+        st.sidebar.caption("La fase non tocca mai -180° (mφ nascosto)")
 
     if margins["omega_gc"]:
         for i, ogc in enumerate(margins["omega_gc"]):
-            label = "ω cross. guadagno" if len(margins["omega_gc"]) == 1 \
-                    else f"ω cross. guadagno {i+1}"
+            label = "ωc (crossover 0 dB)" if len(margins["omega_gc"]) == 1 \
+                    else f"ωc {i+1} (crossover 0 dB)"
             st.sidebar.metric(label=label, value=f"{ogc:.4f} rad/s")
     else:
-        st.sidebar.metric("ω cross. guadagno", "—")
+        st.sidebar.metric("ωc (crossover 0 dB)", "—")
+        st.sidebar.caption("Il modulo non interseca 0 dB")
 
     if margins["omega_pc"]:
         for i, opc in enumerate(margins["omega_pc"]):
-            label = "ω cross. fase" if len(margins["omega_pc"]) == 1 \
-                    else f"ω cross. fase {i+1}"
+            label = "ωπ (crossover −180°)" if len(margins["omega_pc"]) == 1 \
+                    else f"ωπ {i+1} (crossover −180°)"
             st.sidebar.metric(label=label, value=f"{opc:.4f} rad/s")
     else:
-        st.sidebar.metric("ω cross. fase", "—")
+        st.sidebar.metric("ωπ (crossover −180°)", "—")
+        st.sidebar.caption("La fase non incrocia −180°")
 
-    if margins["stabile"] is True:
-        st.sidebar.success("✅ Sistema stabile")
-    elif margins["stabile"] is False:
-        st.sidebar.error("❌ Sistema instabile")
+    # Criterio di Bode
+    st.sidebar.markdown("#### Criterio di Bode")
+    if margins["bode_applicable"]:
+        if margins["stabile"] is True:
+            st.sidebar.success(f"✅ {margins['bode_reason']}")
+        elif margins["stabile"] is False:
+            st.sidebar.error(f"❌ {margins['bode_reason']}")
+        else:
+            st.sidebar.warning("⚠️ Stabilità indeterminata")
     else:
-        st.sidebar.warning("⚠️ Stabilità indeterminata")
+        st.sidebar.warning(f"⚠️ {margins['bode_reason']}")
+    
+    # Criterio di Nyquist
+    st.sidebar.markdown("#### Criterio di Nyquist")
+    N = margins.get("N_encirclements", 0)
+    P = margins.get("P_unstable", 0)
+    st.sidebar.caption(f"N (giri antiorari attorno a −1) = {N}, P (poli instabili) = {P}")
+    if margins.get("nyquist_stable") is True:
+        st.sidebar.success(f"✅ Stabile (N = P = {P})")
+    elif margins.get("nyquist_stable") is False:
+        st.sidebar.error(f"❌ Instabile (N = {N} ≠ P = {P})")
+    else:
+        st.sidebar.warning("⚠️ Nyquist non calcolato")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 8b. DISCRETIZZAZIONE C(s) → C(z) → u[k]
 # ═══════════════════════════════════════════════════════════════════════════
 
-def discretize_tf(num_expr_sym, den_expr_sym, Ts_val: float, method: str) -> dict:
+def discretize_tf(info, Ts_val: float, method: str) -> dict:
     """
     Discretizza C(s) = num_expr_sym / den_expr_sym usando sostituzione algebrica.
 
     Parametri
     ---------
-    num_expr_sym, den_expr_sym : espressioni SymPy in 's'
+    info : SystemInfo (contiene num_expr, den_expr, poles, zeros)
     Ts_val  : periodo di campionamento (float > 0)
-    method  : 'forward' | 'backward' | 'tustin'
+    method  : 'forward' | 'backward' | 'tustin' | 'matched'
 
     Restituisce
     -----------
@@ -1385,45 +1687,84 @@ def discretize_tf(num_expr_sym, den_expr_sym, Ts_val: float, method: str) -> dic
     z_sym = sympy.Symbol('z')
     T_sym = sympy.Symbol('T', positive=True)
 
-    # ── STEP 1: Sostituzione ──────────────────────────────────────────────
-    if method == 'forward':
-        s_sub = (z_sym - 1) / T_sym
-        method_name = "Rapporto in Avanti (Forward Euler)"
-        s_formula_latex = r"s = \frac{z - 1}{T_s}"
-    elif method == 'backward':
-        s_sub = (z_sym - 1) / (z_sym * T_sym)
-        method_name = "Rapporto all'Indietro (Backward Euler)"
-        s_formula_latex = r"s = \frac{z - 1}{z \cdot T_s}"
-    elif method == 'tustin':
-        s_sub = (sympy.Rational(2, 1) / T_sym) * (z_sym - 1) / (z_sym + 1)
-        method_name = "Bilineare (Tustin)"
-        s_formula_latex = r"s = \frac{2}{T_s} \cdot \frac{z - 1}{z + 1}"
-    else:
-        raise ValueError(f"Metodo sconosciuto: {method}")
+    num_expr_sym = info.num_expr
+    den_expr_sym = info.den_expr
 
+    # ── STEP 1: Sostituzione ──────────────────────────────────────────────
     steps = []
 
-    # Step 1 text
-    cs_latex = r"\frac{" + sympy.latex(num_expr_sym) + r"}{" + sympy.latex(den_expr_sym) + r"}"
-    step1 = (
-        f"**STEP 1 — Sostituzione ({method_name})**\n\n"
-        f"$$C(s) = {cs_latex}$$\n\n"
-        f"Applico: ${s_formula_latex}$  con  $T_s = {Ts_val}$\n\n"
-    )
-    steps.append(step1)
+    if method == 'matched':
+        method_name = "Espansione Poli-Zeri (Matched Z-Transform)"
+        import cmath
+        mapped_zeros = [cmath.exp(z * Ts_val) for z in info.zeros]
+        mapped_poles = [cmath.exp(p * Ts_val) for p in info.poles]
+        
+        d = len(info.poles) - len(info.zeros)
+        if d > 0:
+            mapped_zeros.extend([-1.0 + 0j] * (d - 1))
+            
+        def _build_poly(roots_list):
+            poly = sympy.sympify(1.0)
+            for r in roots_list:
+                re, im = round(r.real, 12), round(r.imag, 12)
+                if abs(im) < 1e-10:
+                    poly *= (z_sym - re)
+                else:
+                    poly *= (z_sym - (re + im * sympy.I))
+            return sympy.expand(poly)
+            
+        Cz_num_raw = _build_poly(mapped_zeros)
+        Cz_den = _build_poly(mapped_poles)
+        
+        eps = 1e-6
+        Cs_val = complex(info.expr.subs(s_sym, eps))
+        Cz_unscaled_val = complex((Cz_num_raw / Cz_den).subs(z_sym, cmath.exp(eps * Ts_val)))
+        Kd_real = float((Cs_val / Cz_unscaled_val).real)
+        
+        Cz_num = Cz_num_raw * Kd_real
+        
+        step1 = (
+            f"**STEP 1 — Mappatura Poli e Zeri ({method_name})**\n\n"
+            f"Mappatura: $z = e^{{s T_s}}$. Vengono aggiunti {max(0, d-1)} zeri in $z=-1$.\n"
+            f"Guadagno statico aggiustato per la conservazione in frequenza.\n\n"
+        )
+        steps.append(step1)
+    else:
+        if method == 'forward':
+            s_sub = (z_sym - 1) / T_sym
+            method_name = "Rapporto in Avanti (Forward Euler)"
+            s_formula_latex = r"s = \frac{z - 1}{T_s}"
+        elif method == 'backward':
+            s_sub = (z_sym - 1) / (z_sym * T_sym)
+            method_name = "Rapporto all'Indietro (Backward Euler)"
+            s_formula_latex = r"s = \frac{z - 1}{z \cdot T_s}"
+        elif method == 'tustin':
+            s_sub = (sympy.Rational(2, 1) / T_sym) * (z_sym - 1) / (z_sym + 1)
+            method_name = "Bilineare (Tustin)"
+            s_formula_latex = r"s = \frac{2}{T_s} \cdot \frac{z - 1}{z + 1}"
+        else:
+            raise ValueError(f"Metodo sconosciuto: {method}")
 
-    # ── STEP 2: Riduzione a forma razionale ───────────────────────────────
-    num_z_raw = num_expr_sym.subs(s_sym, s_sub)
-    den_z_raw = den_expr_sym.subs(s_sym, s_sub)
+        cs_latex = r"\frac{" + sympy.latex(num_expr_sym) + r"}{" + sympy.latex(den_expr_sym) + r"}"
+        step1 = (
+            f"**STEP 1 — Sostituzione ({method_name})**\n\n"
+            f"$$C(s) = {cs_latex}$$\n\n"
+            f"Applico: ${s_formula_latex}$  con  $T_s = {Ts_val}$\n\n"
+        )
+        steps.append(step1)
 
-    num_z_simplified = sympy.simplify(num_z_raw)
-    den_z_simplified = sympy.simplify(den_z_raw)
+        # ── STEP 2: Riduzione a forma razionale ───────────────────────────────
+        num_z_raw = num_expr_sym.subs(s_sym, s_sub)
+        den_z_raw = den_expr_sym.subs(s_sym, s_sub)
 
-    Cz_expr = sympy.cancel(num_z_simplified / den_z_simplified)
-    Cz_num, Cz_den = sympy.fraction(Cz_expr)
+        num_z_simplified = sympy.simplify(num_z_raw)
+        den_z_simplified = sympy.simplify(den_z_raw)
 
-    Cz_num = sympy.expand(Cz_num.subs(T_sym, Ts_val))
-    Cz_den = sympy.expand(Cz_den.subs(T_sym, Ts_val))
+        Cz_expr = sympy.cancel(num_z_simplified / den_z_simplified)
+        Cz_num, Cz_den = sympy.fraction(Cz_expr)
+
+        Cz_num = sympy.expand(Cz_num.subs(T_sym, Ts_val))
+        Cz_den = sympy.expand(Cz_den.subs(T_sym, Ts_val))
 
     try:
         num_poly_z = sympy.Poly(Cz_num, z_sym)
@@ -1665,6 +2006,7 @@ def render_discretization_section(info: SystemInfo) -> None:
         method_label = st.selectbox(
             "Metodo di discretizzazione",
             options=[
+                "Espansione Poli-Zeri (Matched)",
                 "Bilineare (Tustin)",
                 "Rapporto in Avanti (Forward Euler)",
                 "Rapporto all'Indietro (Backward Euler)",
@@ -1672,6 +2014,7 @@ def render_discretization_section(info: SystemInfo) -> None:
             key="disc_method",
         )
     method_map = {
+        "Espansione Poli-Zeri (Matched)": "matched",
         "Bilineare (Tustin)": "tustin",
         "Rapporto in Avanti (Forward Euler)": "forward",
         "Rapporto all'Indietro (Backward Euler)": "backward",
@@ -1683,7 +2026,7 @@ def render_discretization_section(info: SystemInfo) -> None:
     if btn_disc:
         try:
             result = discretize_tf(
-                info.num_expr, info.den_expr,
+                info,
                 Ts_val=Ts_input,
                 method=method_key,
             )
@@ -1848,7 +2191,7 @@ def main() -> None:
         st.stop()
 
     # ── Risposta in frequenza ─────────────────────────────────────────────
-    omega = _compute_omega_range(info, n_points=500)
+    omega = _compute_omega_range(info, n_points=2000)
     # Nyquist usa 1000 punti
     omega_ny = _compute_omega_range(info, n_points=1000)
 
@@ -1857,12 +2200,12 @@ def main() -> None:
     try:
         with st.spinner("Calcolo in corso..."):
             # Bode
-            resp = info.tf(1j * omega)
+            resp = info.tf(1j * omega) * np.exp(-1j * omega * info.time_delay)
             mag = np.abs(resp)
             mag_db = 20.0 * np.log10(np.where(mag > 0, mag, 1e-30))
             phase_deg = np.degrees(np.unwrap(np.angle(resp)))
             # Nyquist
-            resp_ny = info.tf(1j * omega_ny)
+            resp_ny = info.tf(1j * omega_ny) * np.exp(-1j * omega_ny * info.time_delay)
     except Exception as exc:
         logging.error(f"Calcolo esatto error: {exc}", exc_info=True)
         st.error("⚠️ Errore nel calcolo esatto. Verifica che il denominatore non abbia radici a zero esatto.")
@@ -1870,6 +2213,11 @@ def main() -> None:
 
     try:
         approx_mag_db, approx_phase_deg = compute_approximated_bode(omega, info)
+        # Allinea l'unwrap della fase esatta all'asintoto per evitare salti di 360° visivi
+        if approx_phase_deg is not None:
+            offset = approx_phase_deg[0] - phase_deg[0]
+            n_360 = round(offset / 360.0)
+            phase_deg += n_360 * 360.0
     except Exception as exc:
         logging.error(f"Calcolo approssimato error: {exc}", exc_info=True)
         st.warning("⚠️ Calcolo degli asintoti non riuscito. Viene mostrato solo il diagramma esatto.")
@@ -1906,127 +2254,150 @@ def main() -> None:
             pass
         latex_gs = r"\frac{" + latex(numer_exp) + r"}{" + latex(denom_exp) + r"}"
         st.latex(r"G(s) = " + latex_gs)
+        
     with col_info:
         st.metric("Ordine", int(info.order))
         st.metric("Tipo", int(info.system_type))
 
 
-    # ── Diagramma di Bode ─────────────────────────────────────────────────
-    st.subheader("Diagramma di Bode")
-    try:
-        bode_fig = plot_bode(
-            plotly_template,
-            omega, mag_db, phase_deg,
-            approx_mag_db, approx_phase_deg, info,
-            phase_in_radians=phase_in_radians,
-            cursor_omega=st.session_state.cursor_omega,
-        )
-        bode_fig = applica_tema_plotly(bode_fig)
-        st.plotly_chart(bode_fig, width="stretch", config={"displaylogo": False})
-    except Exception as exc:
-        logging.error(f"Bode plot error: {exc}", exc_info=True)
-        st.error("⚠️ Errore nella generazione del diagramma di Bode.")
+    tab_freq, tab_time, tab_rlocus, tab_disc = st.tabs([
+        "📈 Bode & Nyquist", 
+        "⏱️ Risposta nel Tempo", 
+        "🌱 Luogo delle Radici", 
+        "🔄 Discretizzazione"
+    ])
 
-    # ══════════════════════════════════════════════════════════════════════
-    # INTERROGAZIONE PUNTUALE (dopo Bode, prima del cursore slider)
-    # ══════════════════════════════════════════════════════════════════════
-    st.markdown("---")
-    st.subheader("🔎 Interrogazione Puntuale")
-
-    qcol1, qcol2, qcol3 = st.columns([2, 1, 1])
-    with qcol1:
-        omega_input = st.number_input(
-            label="Inserisci una frequenza ω [rad/s]",
-            min_value=0.0,
-            value=None,
-            step=None,
-            format="%f",
-            placeholder="es. 0.1",
-            key="omega_query",
-        )
-    with qcol2:
-        omega_unit = st.selectbox(
-            label="Unità inserimento",
-            options=["rad/s", "Hz"],
-            key="omega_query_unit",
-        )
-    with qcol3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        btn_query = st.button("Calcola punto", key="btn_query")
-
-    if btn_query and omega_input is not None:
-        # Conversione Hz → rad/s se necessario
-        if omega_unit == "Hz":
-            omega_q = omega_input * 2.0 * np.pi
-        else:
-            omega_q = omega_input
-
-        if omega_q <= 0:
-            st.warning("La frequenza deve essere un valore positivo.")
-        else:
-            if omega_q < omega_min_val or omega_q > omega_max_val:
-                st.warning(
-                    f"Frequenza fuori dal range calcolato "
-                    f"[{omega_min_val:.4f}, {omega_max_val:.4f}] rad/s. "
-                    f"Il valore verrà comunque calcolato ma potrebbe "
-                    f"non essere significativo."
-                )
-            res = query_single_frequency(
-                omega_q, info, omega_min_val, omega_max_val,
+    with tab_freq:
+        # ── Diagramma di Bode ─────────────────────────────────────────────────
+        st.subheader("Diagramma di Bode")
+    
+        # Calcola margini per annotazioni grafiche
+        margins_for_plot = compute_stability_margins(info.tf, omega, info)
+    
+        try:
+            bode_fig = plot_bode(
+                plotly_template,
+                omega, mag_db, phase_deg,
+                approx_mag_db, approx_phase_deg, info,
+                phase_in_radians=phase_in_radians,
+                cursor_omega=st.session_state.cursor_omega,
+                margins=margins_for_plot,
             )
-            st.session_state.omega_query_result = res
+            bode_fig = applica_tema_plotly(bode_fig)
+            st.plotly_chart(bode_fig, width="stretch", config={"displaylogo": False})
+        except Exception as exc:
+            logging.error(f"Bode plot error: {exc}", exc_info=True)
+            st.error("⚠️ Errore nella generazione del diagramma di Bode.")
 
-    # Mostra tabella risultati se presente in session_state
-    if st.session_state.omega_query_result is not None:
-        res = st.session_state.omega_query_result
-        st.markdown(
-            f"#### Risultati per ω = {res['omega']:.6f} rad/s"
+        # ══════════════════════════════════════════════════════════════════════
+        # INTERROGAZIONE PUNTUALE (dopo Bode, prima del cursore slider)
+        # ══════════════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("🔎 Interrogazione Puntuale")
+
+        qcol1, qcol2, qcol3 = st.columns([2, 1, 1])
+        with qcol1:
+            omega_input = st.number_input(
+                label="Inserisci una frequenza ω [rad/s]",
+                min_value=0.0,
+                value=None,
+                step=None,
+                format="%f",
+                placeholder="es. 0.1",
+                key="omega_query",
+            )
+        with qcol2:
+            omega_unit = st.selectbox(
+                label="Unità inserimento",
+                options=["rad/s", "Hz"],
+                key="omega_query_unit",
+            )
+        with qcol3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            btn_query = st.button("Calcola punto", key="btn_query")
+
+        if btn_query and omega_input is not None:
+            # Conversione Hz → rad/s se necessario
+            if omega_unit == "Hz":
+                omega_q = omega_input * 2.0 * np.pi
+            else:
+                omega_q = omega_input
+
+            if omega_q <= 0:
+                st.warning("La frequenza deve essere un valore positivo.")
+            else:
+                if omega_q < omega_min_val or omega_q > omega_max_val:
+                    st.warning(
+                        f"Frequenza fuori dal range calcolato "
+                        f"[{omega_min_val:.4f}, {omega_max_val:.4f}] rad/s. "
+                        f"Il valore verrà comunque calcolato ma potrebbe "
+                        f"non essere significativo."
+                    )
+                res = query_single_frequency(
+                    omega_q, info, omega_min_val, omega_max_val,
+                )
+                st.session_state.omega_query_result = res
+
+        # Mostra tabella risultati se presente in session_state
+        if st.session_state.omega_query_result is not None:
+            res = st.session_state.omega_query_result
+            st.markdown(
+                f"#### Risultati per ω = {res['omega']:.6f} rad/s"
+            )
+            _render_query_table(res)
+
+        # ── Slider cursore ────────────────────────────────────────────────────
+        st.markdown("---")
+        st.subheader("🎯 Cursore Frequenza")
+        omega_list = omega.tolist()
+        omega_cursor = st.select_slider(
+            "Cursore frequenza ω [rad/s]",
+            options=omega_list,
+            value=(
+                st.session_state.cursor_omega
+                if st.session_state.cursor_omega in omega_list
+                else omega_list[len(omega_list) // 2]
+            ),
+            format_func=lambda x: f"{x:.4f} rad/s",
+            key="cursor_slider",
         )
-        _render_query_table(res)
+        st.session_state.cursor_omega = omega_cursor
 
-    # ── Slider cursore ────────────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("🎯 Cursore Frequenza")
-    omega_list = omega.tolist()
-    omega_cursor = st.select_slider(
-        "Cursore frequenza ω [rad/s]",
-        options=omega_list,
-        value=(
-            st.session_state.cursor_omega
-            if st.session_state.cursor_omega in omega_list
-            else omega_list[len(omega_list) // 2]
-        ),
-        format_func=lambda x: f"{x:.4f} rad/s",
-        key="cursor_slider",
-    )
-    st.session_state.cursor_omega = omega_cursor
+        # Metriche cursore
+        wc = omega_cursor
+        resp_at_wc = info.tf(1j * wc)
+        render_cursor_metrics(wc, resp_at_wc, phase_in_radians)
 
-    # Metriche cursore
-    wc = omega_cursor
-    resp_at_wc = info.tf(1j * wc)
-    render_cursor_metrics(wc, resp_at_wc, phase_in_radians)
+        # ── Diagramma Polare / Nyquist ────────────────────────────────────────
+        st.markdown("---")
+        st.subheader("Diagramma Polare (Nyquist)")
+        cursor_resp_ny = None
+        if st.session_state.cursor_omega is not None:
+            cursor_resp_ny = info.tf(1j * st.session_state.cursor_omega)
+        try:
+            nyquist_fig = plot_nyquist(
+                plotly_template,
+                omega_ny, resp_ny, info,
+                cursor_omega=st.session_state.cursor_omega,
+                cursor_resp=cursor_resp_ny,
+            )
+            nyquist_fig = applica_tema_plotly(nyquist_fig)
+            st.plotly_chart(nyquist_fig, width="stretch", config={"displaylogo": False})
+        except Exception as exc:
+            logging.error(f"Nyquist plot error: {exc}", exc_info=True)
+            st.error("⚠️ Errore nella generazione del diagramma di Nyquist.")
 
-    # ── Diagramma Polare / Nyquist ────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("Diagramma Polare (Nyquist)")
-    cursor_resp_ny = None
-    if st.session_state.cursor_omega is not None:
-        cursor_resp_ny = info.tf(1j * st.session_state.cursor_omega)
-    try:
-        nyquist_fig = plot_nyquist(
-            plotly_template,
-            omega_ny, resp_ny,
-            cursor_omega=st.session_state.cursor_omega,
-            cursor_resp=cursor_resp_ny,
-        )
-        nyquist_fig = applica_tema_plotly(nyquist_fig)
-        st.plotly_chart(nyquist_fig, width="stretch", config={"displaylogo": False})
-    except Exception as exc:
-        logging.error(f"Nyquist plot error: {exc}", exc_info=True)
-        st.error("⚠️ Errore nella generazione del diagramma di Nyquist.")
 
-    # ── Discretizzazione C(s) → C(z) → u[k] ──────────────────────────────
-    render_discretization_section(info)
+    with tab_time:
+        from components.time_response import render_time_response_section
+        render_time_response_section(info, plotly_template)
+
+    with tab_rlocus:
+        from components.root_locus import render_root_locus_section
+        render_root_locus_section(info, plotly_template)
+
+    with tab_disc:
+        render_discretization_section(info)
 
 
 # ---------------------------------------------------------------------------
