@@ -272,13 +272,16 @@ def applica_tema_plotly(fig: go.Figure) -> go.Figure:
         paper_bgcolor=paper_bg,
         plot_bgcolor=bg,
         font=dict(color=font_col, size=12, family="'Inter', 'Segoe UI', sans-serif"),
-        title_font=dict(color=font_col, size=14),
         legend=dict(
             bgcolor="rgba(0,0,0,0)",
             font=dict(color=font_col, size=11),
             bordercolor="rgba(0,0,0,0)",
         ),
     )
+    # Imposta il font del titolo solo se un titolo esiste davvero: farlo su
+    # figure senza titolo porta plotly.js a renderizzare il testo "undefined".
+    if fig.layout.title and fig.layout.title.text:
+        fig.update_layout(title_font=dict(color=font_col, size=14))
     # Aggiorna tutti gli assi presenti (gestisce subplot automaticamente)
     for key in fig.layout:
         obj = getattr(fig.layout, key, None)
@@ -1976,10 +1979,165 @@ def discretize_tf(info, Ts_val: float, method: str) -> dict:
         'diff_eq_str': diff_eq_str,
         'c_code': c_code,
         'method_name': method_name,
+        'Ts': Ts_val,
     }
 
 
-def render_discretization_section(info: SystemInfo) -> None:
+def plot_bode_discreto(
+    plotly_template: str,
+    omega: np.ndarray,
+    mag_db_cont: np.ndarray,
+    phase_deg_cont: np.ndarray,
+    mag_db_disc: np.ndarray,
+    phase_deg_disc: np.ndarray,
+    phase_in_radians: bool = False,
+) -> go.Figure:
+    """Diagramma di Bode di confronto: continuo vs discreto (fino a ω = π/Tₛ)."""
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=("Modulo (dB)", "Fase"),
+    )
+
+    fig.add_trace(go.Scatter(
+        x=omega, y=mag_db_cont, mode="lines", name="Continuo",
+        line=dict(color=_EXACT_COLOR, width=_EXACT_WIDTH),
+        legendgroup="cont", showlegend=True,
+    ), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=omega, y=mag_db_disc, mode="lines", name="Discreto",
+        line=dict(color=_MARGIN_GAIN_COLOR, width=_EXACT_WIDTH, dash="dash"),
+        legendgroup="disc", showlegend=True,
+    ), row=1, col=1)
+
+    if phase_in_radians:
+        phase_cont = phase_deg_cont / 180.0
+        phase_disc = phase_deg_disc / 180.0
+        phase_label = "Fase (×π rad)"
+    else:
+        phase_cont = phase_deg_cont
+        phase_disc = phase_deg_disc
+        phase_label = "Fase (°)"
+
+    fig.add_trace(go.Scatter(
+        x=omega, y=phase_cont, mode="lines", name="Continuo",
+        line=dict(color=_EXACT_COLOR, width=_EXACT_WIDTH),
+        legendgroup="cont", showlegend=False,
+    ), row=2, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=omega, y=phase_disc, mode="lines", name="Discreto",
+        line=dict(color=_MARGIN_GAIN_COLOR, width=_EXACT_WIDTH, dash="dash"),
+        legendgroup="disc", showlegend=False,
+    ), row=2, col=1)
+
+    log_min = np.log10(omega[0])
+    log_max = np.log10(omega[-1])
+    fig.update_xaxes(type="log", range=[log_min, log_max], row=1, col=1)
+    fig.update_xaxes(
+        type="log", range=[log_min, log_max],
+        title_text="ω [rad/s]", row=2, col=1,
+    )
+    fig.update_yaxes(title_text="Modulo (dB)", row=1, col=1)
+    fig.update_yaxes(title_text=phase_label, row=2, col=1)
+
+    fig.update_layout(
+        height=500,
+        template=plotly_template,
+        margin=dict(l=60, r=40, t=50, b=60),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02,
+            xanchor="right", x=1,
+        ),
+    )
+    return fig
+
+
+def _render_discrete_comparison(
+    info: SystemInfo,
+    result: dict,
+    plotly_template: str,
+    phase_in_radians: bool,
+) -> None:
+    """Confronto in frequenza C(s) vs C(z) e verifica dei poli discreti."""
+    num_z = np.array(result['cz_num_coeffs'], dtype=float)
+    den_z = np.array(result['cz_den_coeffs'], dtype=float)
+    T = float(result['Ts'])
+
+    # Range: come l'analisi continua, ma limitato alla frequenza di Nyquist π/T
+    omega_full = _compute_omega_range(info, n_points=500)
+    w_hi = min(float(omega_full[-1]), np.pi / T)
+    w_lo = float(omega_full[0]) if float(omega_full[0]) < w_hi else w_hi / 1000.0
+    omega_disc = np.logspace(np.log10(w_lo), np.log10(w_hi), 500)
+
+    # Risposta discreta: z = e^(jωT)
+    z_vals = np.exp(1j * omega_disc * T)
+    resp_disc = np.polyval(num_z, z_vals) / np.polyval(den_z, z_vals)
+    mag_disc = np.abs(resp_disc)
+    mag_db_disc = 20.0 * np.log10(np.where(mag_disc > 0, mag_disc, 1e-30))
+    phase_deg_disc = np.degrees(np.unwrap(np.angle(resp_disc)))
+
+    # Risposta continua sulla stessa griglia (ritardo incluso)
+    resp_cont = info.tf(1j * omega_disc) * np.exp(-1j * omega_disc * info.time_delay)
+    mag_cont = np.abs(resp_cont)
+    mag_db_cont = 20.0 * np.log10(np.where(mag_cont > 0, mag_cont, 1e-30))
+    phase_deg_cont = np.degrees(np.unwrap(np.angle(resp_cont)))
+
+    st.subheader("📉 Confronto in frequenza: C(s) vs C(z)")
+    st.caption(
+        f"Risposta valutata fino alla frequenza di Nyquist ω = π/Tₛ "
+        f"≈ {np.pi / T:.4g} rad/s."
+    )
+    if info.time_delay > 0:
+        st.warning(
+            "⚠️ Il ritardo puro e^(−sτ) non è incluso in C(z): "
+            "va aggiunto come ritardo di "
+            f"{info.time_delay / T:.1f} campioni (≈ z^−{max(1, round(info.time_delay / T))})."
+        )
+
+    fig = plot_bode_discreto(
+        plotly_template, omega_disc,
+        mag_db_cont, phase_deg_cont,
+        mag_db_disc, phase_deg_disc,
+        phase_in_radians=phase_in_radians,
+    )
+    fig = applica_tema_plotly(fig)
+    st.plotly_chart(fig, width="stretch", config={"displaylogo": False})
+
+    # ── Poli del sistema discreto e stabilità (|p| < 1) ───────────────────
+    st.markdown("#### Poli di C(z) e stabilità")
+    poles_z = np.roots(den_z)
+    if len(poles_z) == 0:
+        st.write("Nessun polo finito.")
+        return
+
+    cols = st.columns(min(len(poles_z), 4))
+    for i, p in enumerate(poles_z):
+        modulo = abs(p)
+        if abs(p.imag) < 1e-10:
+            testo = f"{p.real:.4f}"
+        else:
+            testo = f"{p.real:.4f}{p.imag:+.4f}j"
+        cols[i % len(cols)].metric(
+            f"p{i + 1}", testo, delta=f"|p| = {modulo:.4f}",
+            delta_color="normal" if modulo < 1 else "inverse",
+        )
+
+    if all(abs(p) < 1 - 1e-12 for p in poles_z):
+        st.success("✅ Tutti i poli sono dentro il cerchio unitario: C(z) è asintoticamente stabile.")
+    elif any(abs(p) > 1 + 1e-12 for p in poles_z):
+        st.error("❌ Almeno un polo è fuori dal cerchio unitario: C(z) è instabile.")
+    else:
+        st.warning("⚠️ Poli sul cerchio unitario: C(z) è al limite di stabilità.")
+
+
+def render_discretization_section(
+    info: SystemInfo,
+    plotly_template: str = "plotly_white",
+    phase_in_radians: bool = False,
+) -> None:
     """Renderizza la sezione UI di discretizzazione."""
     st.markdown("---")
     st.subheader("🔄 Discretizzazione C(s) → C(z) → u[k]")
@@ -2038,6 +2196,15 @@ def render_discretization_section(info: SystemInfo) -> None:
         for step_text in result['steps']:
             st.markdown(step_text)
             st.markdown("---")
+
+        try:
+            _render_discrete_comparison(
+                info, result, plotly_template, phase_in_radians,
+            )
+        except Exception as exc:
+            import logging
+            logging.error(f"Discrete comparison error: {exc}", exc_info=True)
+            st.warning("⚠️ Confronto in frequenza non disponibile per questo sistema.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2145,6 +2312,10 @@ def main() -> None:
 
     if analyze_clicked:
         st.session_state.analyzed = True
+        # Azzera i risultati derivati dal sistema precedente: si riferirebbero
+        # a una G(s) diversa da quella appena analizzata.
+        st.session_state.disc_result = None
+        st.session_state.omega_query_result = None
 
     if not st.session_state.analyzed:
         st.info("Inserisci una funzione di trasferimento e premi **Analizza**.")
@@ -2369,7 +2540,9 @@ def main() -> None:
         render_root_locus_section(info, plotly_template)
 
     with tab_disc:
-        render_discretization_section(info)
+        render_discretization_section(
+            info, plotly_template, phase_in_radians=phase_in_radians,
+        )
 
 
 # ---------------------------------------------------------------------------
