@@ -404,12 +404,17 @@ def parse_transfer_function(latex_num: str, latex_den: str) -> SystemInfo:
         num_poly = sympy.Poly(sympy.expand(num_expr), s, domain="ZZ")
         den_poly = sympy.Poly(sympy.expand(den_expr), s, domain="ZZ")
 
-    # Estrai coefficienti e filtra artefatti numerici
+    # Estrai coefficienti e filtra artefatti numerici.
+    # Soglia RELATIVA al coefficiente più grande: una soglia assoluta
+    # azzererebbe coefficienti legittimi con frequenze di rottura molto alte
+    # (es. (1+s/1e6)**2 → coeff. s² = 1e-12).
     num_coeffs = [float(c) for c in num_poly.all_coeffs()]
     den_coeffs = [float(c) for c in den_poly.all_coeffs()]
-    
-    num_coeffs = [c if abs(c) > 1e-10 else 0.0 for c in num_coeffs]
-    den_coeffs = [c if abs(c) > 1e-10 else 0.0 for c in den_coeffs]
+
+    num_scale = max(abs(c) for c in num_coeffs)
+    den_scale = max(abs(c) for c in den_coeffs)
+    num_coeffs = [c if num_scale and abs(c) > 1e-12 * num_scale else 0.0 for c in num_coeffs]
+    den_coeffs = [c if den_scale and abs(c) > 1e-12 * den_scale else 0.0 for c in den_coeffs]
 
     # Usa np.roots come richiesto, ma forza a 0 gli zeri vicinissimi all'origine per evitare artefatti
     raw_zeros = np.roots(num_coeffs)
@@ -483,15 +488,11 @@ def _compute_omega_range(
 #    (Metodo Basile & Chiacchio, "Lezioni di Automatica")
 # ═══════════════════════════════════════════════════════════════════════════
 
-import numpy as np
-
 def compute_approximated_bode(
     omega: np.ndarray,
     info: 'SystemInfo',
 ) -> tuple[np.ndarray, np.ndarray]:
     """Calcola diagramma di Bode APPROSSIMATO (asintotico) corretto."""
-    import numpy as np
-    
     num = info.num_coeffs
     den = info.den_coeffs
     
@@ -544,15 +545,10 @@ def compute_approximated_bode(
                     break
     
     # ── Calcolo K_b con segno corretto (metodo Basile & Chiacchio) ────────
-    # K_b = (a_n / b_m) * product(-z_i_fin) / product(-p_j_fin)
-    # dove a_n e b_m sono i leading coefficients.
-    # Usare (-root) anziché |root| preserva il segno per poli/zeri RHP.
-    K_b = complex(K_num / K_den)
-    for z in zeros_fin:
-        K_b *= (-z)
-    for p in poles_fin:
-        K_b /= (-p)
-    K_b_real = float(K_b.real)  # la parte immaginaria è ~0 per sistemi reali
+    # Utilizziamo i coefficienti di grado minimo non nulli per preservare il segno
+    b_k = next((c for c in reversed(num) if abs(c) > 1e-10), 0.0)
+    a_h = next((c for c in reversed(den) if abs(c) > 1e-10), 1.0)
+    K_b_real = float(b_k / a_h)
     K_bode_abs = abs(K_b_real)
     
     # Pendenza iniziale: −g·20 dB/dec (per poli nell'origine g>0 → pendenza negativa)
@@ -1420,9 +1416,14 @@ def _format_roots(roots: list[complex], st_container, label_prefix: str):
             else:
                 st_container.metric(f"{label_prefix} {i+1}", f"{val:.4f}")
 
-def compute_stability_margins(sys_tf, omega: np.ndarray, info: 'SystemInfo' = None) -> dict:
+def compute_stability_margins(
+    sys_tf, omega: np.ndarray, info: 'SystemInfo' = None, time_delay: float = 0.0,
+) -> dict:
     """Calcola i margini di stabilità con interpolazione logaritmica.
-    
+
+    Il ritardo puro e^(−sτ) va passato via *time_delay*: non è rappresentabile
+    nella TransferFunction razionale ma riduce la fase (e quindi i margini).
+
     Ritorna un dizionario con:
     - omega_gc: lista di ωc (crossover di guadagno, |G| = 0 dB)
     - omega_pc: lista di ωπ (crossover di fase, ∠G = −180°)
@@ -1437,8 +1438,11 @@ def compute_stability_margins(sys_tf, omega: np.ndarray, info: 'SystemInfo' = No
     """
     import control
     freq_resp = control.frequency_response(sys_tf, omega)
-    mag = np.abs(freq_resp.fresp.squeeze())
-    phase_deg = np.unwrap(np.angle(freq_resp.fresp.squeeze(), deg=False)) * 180.0 / np.pi
+    fresp = freq_resp.fresp.squeeze()
+    if time_delay:
+        fresp = fresp * np.exp(-1j * omega * time_delay)
+    mag = np.abs(fresp)
+    phase_deg = np.unwrap(np.angle(fresp, deg=False)) * 180.0 / np.pi
     mag_dB = 20 * np.log10(np.where(mag > 0, mag, 1e-12))
 
     result = {
@@ -1501,14 +1505,9 @@ def compute_stability_margins(sys_tf, omega: np.ndarray, info: 'SystemInfo' = No
         
         # 2. K_b > 0 (calcolato internamente)
         if result["bode_applicable"]:
-            K_num = float(info.num_coeffs[0]) if info.num_coeffs else 1.0
-            K_den = float(info.den_coeffs[0]) if info.den_coeffs else 1.0
-            K_b_complex = complex(K_num / K_den)
-            for z in info.zeros:
-                if abs(z) > 1e-8: K_b_complex *= (-z)
-            for p in info.poles:
-                if abs(p) > 1e-8: K_b_complex /= (-p)
-            K_b = float(K_b_complex.real)
+            b_k = next((c for c in reversed(info.num_coeffs) if abs(c) > 1e-10), 0.0)
+            a_h = next((c for c in reversed(info.den_coeffs) if abs(c) > 1e-10), 1.0)
+            K_b = float(b_k / a_h)
             if K_b < 0:
                 result["bode_applicable"] = False
                 result["bode_reason"] = "Non applicabile: guadagno di Bode K_b < 0."
@@ -1538,7 +1537,7 @@ def compute_stability_margins(sys_tf, omega: np.ndarray, info: 'SystemInfo' = No
 
     # ── Criterio di Nyquist: conteggio giri ──
     if info is not None:
-        resp_full = freq_resp.fresp.squeeze()
+        resp_full = fresp
         ref = -1.0 + 0j
         # Percorso completo: ω > 0 poi coniugato per ω < 0
         path_pos = resp_full - ref
@@ -1577,21 +1576,18 @@ def _show_sidebar_info(info: SystemInfo, omega: np.ndarray) -> None:
     st.sidebar.metric("Ordine del Sistema", int(info.order))
     st.sidebar.metric("Tipo del Sistema", int(info.system_type))
 
-    K_num = float(info.num_coeffs[0]) if len(info.num_coeffs) > 0 else 1.0
-    K_den = float(info.den_coeffs[0]) if len(info.den_coeffs) > 0 else 1.0
-    K_b_complex = complex(K_num / K_den)
-    for z in info.zeros:
-        if abs(z) > 1e-8: K_b_complex *= (-z)
-    for p in info.poles:
-        if abs(p) > 1e-8: K_b_complex /= (-p)
-    K_b = float(K_b_complex.real)
+    b_k = next((c for c in reversed(info.num_coeffs) if abs(c) > 1e-10), 0.0)
+    a_h = next((c for c in reversed(info.den_coeffs) if abs(c) > 1e-10), 1.0)
+    K_b = float(b_k / a_h)
 
     segno = "−" if K_b < 0 else "+"
     st.sidebar.metric("Costante di Bode |K_b|", f"{abs(K_b):.4f}")
     if K_b < 0:
         st.sidebar.caption("K_b < 0 → sfasamento iniziale di −180° incluso nella fase")
 
-    margins = compute_stability_margins(info.tf, omega, info)
+    margins = compute_stability_margins(
+        info.tf, omega, info, time_delay=info.time_delay,
+    )
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📐 Stabilità")
@@ -2059,39 +2055,13 @@ def main() -> None:
         st.header("⚙️ Informazioni Sistema")
         
         plotly_template = "plotly_white"
-        
+
         st.divider()
-        
-        if st.session_state.get('analizzato', False):
-            poles = st.session_state['poles']
-            zeros = st.session_state['zeros']
-            order = st.session_state['order']
-            K_static = st.session_state['K_static']
-            
-            st.metric("Ordine", order)
-            if K_static is None:
-                st.metric("Guadagno Statico K", "∞")
-            else:
-                st.metric("Guadagno Statico K", f"{K_static:.4f}" if not np.isinf(K_static) else "∞")
-            
-            st.subheader("Poli")
-            if len(poles) > 0:
-                for i, p in enumerate(poles):
-                    if np.abs(p.imag) < 1e-8:
-                        st.write(f"p{i+1} = {p.real:.4f}")
-                    else:
-                        st.write(f"p{i+1} = {p.real:.4f} ± {np.abs(p.imag):.4f}j")
-            else:
-                st.write("Nessun polo finito")
-            
-            if len(zeros) > 0:
-                st.subheader("Zeri")
-                for i, z in enumerate(zeros):
-                    if np.abs(z.imag) < 1e-8:
-                        st.write(f"z{i+1} = {z.real:.4f}")
-                    else:
-                        st.write(f"z{i+1} = {z.real:.4f} ± {np.abs(z.imag):.4f}j")
-        else:
+
+        # Le informazioni dettagliate del sistema vengono aggiunte da
+        # _show_sidebar_info() dopo il parsing; qui mostriamo solo il
+        # suggerimento iniziale prima della prima analisi.
+        if not st.session_state.get("analyzed", False):
             st.info("Inserisci i coefficienti e premi Analizza")
 
     # Logo e Titolo in alto allineati
@@ -2271,8 +2241,10 @@ def main() -> None:
         # ── Diagramma di Bode ─────────────────────────────────────────────────
         st.subheader("Diagramma di Bode")
     
-        # Calcola margini per annotazioni grafiche
-        margins_for_plot = compute_stability_margins(info.tf, omega, info)
+        # Calcola margini per annotazioni grafiche (ritardo incluso)
+        margins_for_plot = compute_stability_margins(
+            info.tf, omega, info, time_delay=info.time_delay,
+        )
     
         try:
             bode_fig = plot_bode(
