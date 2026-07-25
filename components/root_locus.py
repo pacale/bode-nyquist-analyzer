@@ -57,19 +57,25 @@ def render_root_locus_section(info, plotly_template="plotly_white"):
                 name='Zeri O.L. (K→∞)'
             ))
             
+        is_dark = plotly_template == "plotly_dark"
+
         fig.update_layout(
             title="Luogo delle Radici per K > 0",
             xaxis_title="Asse Reale",
             yaxis_title="Asse Immaginario",
             template=plotly_template,
             margin=dict(l=40, r=40, t=40, b=40),
-            height=500
+            height=500,
+            paper_bgcolor="#0e1117" if is_dark else "#f8f9fc",
+            plot_bgcolor="#131720" if is_dark else "#ffffff",
+            font=dict(color="#e8e9f3" if is_dark else "#1a1a2e"),
         )
-        
+
         # Linea asse immaginario e asse reale
-        fig.add_vline(x=0, line_width=1, line_dash="dash", line_color="black", opacity=0.5)
-        fig.add_hline(y=0, line_width=1, line_dash="dash", line_color="black", opacity=0.5)
-        
+        axis_col = "#8a92ab" if is_dark else "black"
+        fig.add_vline(x=0, line_width=1, line_dash="dash", line_color=axis_col, opacity=0.5)
+        fig.add_hline(y=0, line_width=1, line_dash="dash", line_color=axis_col, opacity=0.5)
+
         st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
         
     except Exception as e:

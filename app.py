@@ -12,6 +12,7 @@ from __future__ import annotations
 import re as _re
 import warnings
 from dataclasses import dataclass, field
+from string import Template
 from typing import Optional
 
 import control as ctrl  # type: ignore
@@ -24,34 +25,9 @@ from plotly.subplots import make_subplots  # type: ignore
 # ---------------------------------------------------------------------------
 # Configurazione pagina (deve essere il primo comando Streamlit)
 # ---------------------------------------------------------------------------
-import os
-from PIL import Image
-
-logo_path = "logo.png"
-if not os.path.exists(logo_path):
-    # Cerca nella cartella superiore
-    parent_logo = os.path.join("..", "logo.png")
-    if os.path.exists(parent_logo):
-        logo_path = parent_logo
-    else:
-        # Cerca rispetto alla cartella dello script
-        script_dir = os.path.dirname(__file__)
-        script_logo = os.path.join(script_dir, "logo.png")
-        if os.path.exists(script_logo):
-            logo_path = script_logo
-        else:
-            parent_script_logo = os.path.join(script_dir, "..", "logo.png")
-            if os.path.exists(parent_script_logo):
-                logo_path = parent_script_logo
-
-try:
-    logo_img = Image.open(logo_path)
-except Exception:
-    logo_img = "📈"
-
 st.set_page_config(
     page_title="Analizzatore Bode & Nyquist",
-    page_icon=logo_img,
+    page_icon="📈",
     layout="wide",
 )
 
@@ -74,11 +50,75 @@ _MARGIN_GAIN_COLOR  = "#e74c3c"   # rosso per margine di ampiezza
 _WC_COLOR  = "#2ecc71"            # verde per ωc
 _WPI_COLOR = "#e74c3c"            # rosso per ωπ
 
-# ── CSS temi ─────────────────────────────────────────────────────────────
-# Solo tema chiaro attivo
+# ── Temi (chiaro / scuro) ────────────────────────────────────────────────
+# Un'unica sorgente di verità: la palette definisce sia il CSS di Streamlit
+# sia i colori delle figure Plotly, così i due non possono divergere.
 
+_PALETTE_LIGHT = {
+    "app_bg": "#f7f8fc",
+    "text": "#1a1a2e",
+    "sidebar_bg": "#eef0f8",
+    "sidebar_border": "#d0d4e8",
+    "metric_val": "#1a3a6e",
+    "metric_label": "#444466",
+    "metric_delta": "#2a6a2a",
+    "input_bg": "#ffffff",
+    "input_border": "#c0c4d8",
+    "input_focus": "#4d6cc0",
+    "input_glow": "rgba(77, 108, 192, 0.20)",
+    "code_bg": "#e8eaf0",
+    "code_text": "#2a2a4a",
+    "code_border": "#c8cae0",
+    "caption": "#555577",
+    "divider": "#d0d4e8",
+    "radio_border": "#9090aa",
+    "alert_bg": "#e8eaf6",
+    "alert_border": "#5c6bc0",
+    "chart_bg": "#ffffff",
+    "chart_shadow": "rgba(0, 0, 0, 0.06)",
+    "tab_active": "#1a1a2e",
+    # Plotly
+    "plot_bg": "#ffffff",
+    "plot_paper": "#f8f9fc",
+    "plot_grid": "#e8eaf0",
+    "plot_zeroline": "#c5cae9",
+    "plot_template": "plotly_white",
+}
 
-_LIGHT_CSS = """
+_PALETTE_DARK = {
+    "app_bg": "#0e1117",
+    "text": "#e8e9f3",
+    "sidebar_bg": "#161a25",
+    "sidebar_border": "#2a3040",
+    "metric_val": "#7fb3f0",
+    "metric_label": "#9aa0b8",
+    "metric_delta": "#4ade80",
+    "input_bg": "#1c2029",
+    "input_border": "#333a4a",
+    "input_focus": "#4d9de0",
+    "input_glow": "rgba(77, 157, 224, 0.25)",
+    "code_bg": "#1c2029",
+    "code_text": "#d5d8e5",
+    "code_border": "#333a4a",
+    "caption": "#9aa0b8",
+    "divider": "#2a3040",
+    "radio_border": "#555f75",
+    "alert_bg": "#1a2233",
+    "alert_border": "#4d9de0",
+    "chart_bg": "#131720",
+    "chart_shadow": "rgba(0, 0, 0, 0.40)",
+    "tab_active": "#e8e9f3",
+    # Plotly
+    "plot_bg": "#131720",
+    "plot_paper": "#0e1117",
+    "plot_grid": "#2a3040",
+    "plot_zeroline": "#3d4560",
+    "plot_template": "plotly_dark",
+}
+
+# I segnaposto usano la sintassi $nome di string.Template: il CSS contiene
+# graffe e simboli % che romperebbero str.format() o il formatting con %.
+_CSS_TEMPLATE = Template("""
 <style>
 /* === ROOT E BODY === */
 html, body,
@@ -88,25 +128,24 @@ html, body,
 [data-testid="block-container"],
 .main,
 .main .block-container {
-    background-color: #f7f8fc !important;
-    color: #1a1a2e !important;
+    background-color: $app_bg !important;
+    color: $text !important;
 }
 
 /* === HEADER === */
 header[data-testid="stHeader"],
 header[data-testid="stHeader"] * {
-    background-color: #f7f8fc !important;
-    color: #1a1a2e !important;
+    background-color: $app_bg !important;
+    color: $text !important;
 }
 
 /* === SIDEBAR === */
 section[data-testid="stSidebar"],
 section[data-testid="stSidebar"] > div:first-child {
-    background-color: #eef0f8 !important;
-    border-right: 1px solid #d0d4e8 !important;
+    background-color: $sidebar_bg !important;
+    border-right: 1px solid $sidebar_border !important;
 }
 
-/* Testo sidebar — TUTTI i livelli */
 section[data-testid="stSidebar"] p,
 section[data-testid="stSidebar"] label,
 section[data-testid="stSidebar"] span,
@@ -116,23 +155,23 @@ section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3,
 section[data-testid="stSidebar"] small,
 section[data-testid="stSidebar"] * {
-    color: #1a1a2e !important;
+    color: $text !important;
 }
 
-/* === METRIC (numeri grandi nella sidebar) === */
+/* === METRIC === */
 [data-testid="stMetricValue"] {
-    color: #1a3a6e !important;
+    color: $metric_val !important;
     font-weight: 700 !important;
 }
 [data-testid="stMetricLabel"] {
-    color: #444466 !important;
+    color: $metric_label !important;
     font-size: 0.78rem !important;
 }
 [data-testid="stMetricDelta"] {
-    color: #2a6a2a !important;
+    color: $metric_delta !important;
 }
 
-/* === INPUT FIELDS — sovrascrivi dark mode residua === */
+/* === INPUT === */
 .stTextInput input,
 .stTextInput textarea,
 [data-testid="stTextInput"] input,
@@ -140,22 +179,22 @@ section[data-testid="stSidebar"] * {
 [data-testid="stNumberInput"] input,
 div[data-baseweb="input"] input,
 div[data-baseweb="textarea"] textarea {
-    background-color: #ffffff !important;
-    color: #1a1a2e !important;
-    border: 1px solid #c0c4d8 !important;
+    background-color: $input_bg !important;
+    color: $text !important;
+    border: 1px solid $input_border !important;
     border-radius: 8px !important;
 }
 .stTextInput input:focus,
 [data-testid="stTextInput"] input:focus {
-    border-color: #4d6cc0 !important;
-    box-shadow: 0 0 0 2px rgba(77, 108, 192, 0.2) !important;
-    background-color: #ffffff !important;
+    border-color: $input_focus !important;
+    box-shadow: 0 0 0 2px $input_glow !important;
+    background-color: $input_bg !important;
 }
 
-/* === BOX ESEMPI FORMA (copertura completa e forzata) === */
+/* === BOX ESEMPI / CODICE === */
 .stApp div[data-testid="stMarkdownContainer"] code,
-.stApp .stCode, 
-.stApp pre, 
+.stApp .stCode,
+.stApp pre,
 .stApp code,
 .stApp [data-testid="stCode"],
 .stApp [data-testid="stCode"] pre,
@@ -165,26 +204,26 @@ div[data-baseweb="textarea"] textarea {
 .stApp [data-testid="stTextInput"] input:disabled,
 .stApp div[data-baseweb="input"] input[disabled],
 .stApp div[data-baseweb="input"] input[readonly] {
-    background-color: #e8eaf0 !important;
-    color: #2a2a4a !important;
-    border: 1px solid #c8cae0 !important;
+    background-color: $code_bg !important;
+    color: $code_text !important;
+    border: 1px solid $code_border !important;
     border-radius: 6px !important;
 }
 
-/* === SELECT/DROPDOWN === */
+/* === SELECT / DROPDOWN === */
 div[data-baseweb="select"] > div {
-    background-color: #ffffff !important;
-    color: #1a1a2e !important;
+    background-color: $input_bg !important;
+    color: $text !important;
 }
 div[data-baseweb="popover"] div,
 div[data-baseweb="popover"] ul,
 div[data-baseweb="popover"] li,
 div[data-baseweb="popover"] span {
-    background-color: #ffffff !important;
-    color: #1a1a2e !important;
+    background-color: $input_bg !important;
+    color: $text !important;
 }
 
-/* === PULSANTE ANALIZZA === */
+/* === PULSANTI === */
 .stButton > button {
     background-color: #e05252 !important;
     color: #ffffff !important;
@@ -196,81 +235,91 @@ div[data-baseweb="popover"] span {
     background-color: #c04040 !important;
 }
 
-/* === TESTO PRINCIPALE === */
+/* === TESTO === */
 p, h1, h2, h3, h4, li {
-    color: #1a1a2e !important;
+    color: $text !important;
 }
 .stMarkdown p, .stMarkdown span {
-    color: #1a1a2e !important;
+    color: $text !important;
+}
+.stCaption, small, [data-testid="stCaptionContainer"] {
+    color: $caption !important;
 }
 
-/* === CAPTION / TESTO SECONDARIO === */
-.stCaption, small, [data-testid="stCaptionContainer"] {
-    color: #555577 !important;
+/* === TAB === */
+button[data-baseweb="tab"] {
+    color: $caption !important;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: $tab_active !important;
 }
 
 /* === DIVIDERS === */
 hr {
-    border-color: #d0d4e8 !important;
+    border-color: $divider !important;
 }
 
-/* === TOGGLE LABEL === */
+/* === TOGGLE / RADIO === */
 [data-testid="stToggle"] label,
-[data-testid="stToggle"] span {
-    color: #1a1a2e !important;
-}
-
-/* === RADIO BUTTON LABEL === */
+[data-testid="stToggle"] span,
 [data-testid="stRadio"] label,
 [data-testid="stRadio"] span {
-    color: #1a1a2e !important;
+    color: $text !important;
 }
 [data-testid="stRadio"] div[role="radiogroup"] label span {
-    color: #555577 !important;
+    color: $caption !important;
 }
 [data-testid="stRadio"] div[role="radiogroup"] label div {
-    border-color: #9090aa !important;
+    border-color: $radio_border !important;
 }
 
-/* === ALERT/WARNING BOX === */
+/* === ALERT === */
 [data-testid="stAlert"], div[role="alert"], .stAlert {
-    background-color: #e8eaf6 !important;
-    color: #1a1a2e !important;
-    border-left: 4px solid #5c6bc0 !important;
+    background-color: $alert_bg !important;
+    color: $text !important;
+    border-left: 4px solid $alert_border !important;
 }
 
-/* === CONTENITORE GRAFICI === */
+/* === TABELLE === */
+.stApp table, .stApp th, .stApp td {
+    color: $text !important;
+    border-color: $divider !important;
+}
+.stApp thead th {
+    background-color: $code_bg !important;
+}
+
+/* === GRAFICI === */
 .stPlotlyChart, [data-testid="stPlotlyChart"] {
-    background-color: #ffffff !important;
+    background-color: $chart_bg !important;
     border-radius: 10px !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+    box-shadow: 0 2px 8px $chart_shadow !important;
 }
 
 /* === SLIDER === */
 [data-testid="stSlider"] * {
-    color: #1a1a2e !important;
+    color: $text !important;
 }
 </style>
-"""
+""")
+
+_LIGHT_CSS = _CSS_TEMPLATE.substitute(_PALETTE_LIGHT)
+_DARK_CSS = _CSS_TEMPLATE.substitute(_PALETTE_DARK)
 
 
 # ---------------------------------------------------------------------------
-# Helper: applica tema Plotly ai grafici (Problema 2)
+# Helper: applica il tema attivo alle figure Plotly
 # ---------------------------------------------------------------------------
-def applica_tema_plotly(fig: go.Figure) -> go.Figure:
-    """Applica colori e font coerenti al tema chiaro su ogni figura Plotly."""
-    bg       = "#ffffff"
-    paper_bg = "#f8f9fc"
-    grid_col = "#e8eaf0"
-    zeroline = "#c5cae9"
-    font_col = "#1a1a2e"
-    spike_col = "#e05252"
-    template = "plotly_white"
+def applica_tema_plotly(fig: go.Figure, dark_mode: bool = False) -> go.Figure:
+    """Applica colori e font coerenti col tema attivo a ogni figura Plotly."""
+    pal = _PALETTE_DARK if dark_mode else _PALETTE_LIGHT
+    font_col = pal["text"]
+    grid_col = pal["plot_grid"]
 
     fig.update_layout(
-        template=template,
-        paper_bgcolor=paper_bg,
-        plot_bgcolor=bg,
+        template=pal["plot_template"],
+        paper_bgcolor=pal["plot_paper"],
+        plot_bgcolor=pal["plot_bg"],
         font=dict(color=font_col, size=12, family="'Inter', 'Segoe UI', sans-serif"),
         legend=dict(
             bgcolor="rgba(0,0,0,0)",
@@ -282,6 +331,12 @@ def applica_tema_plotly(fig: go.Figure) -> go.Figure:
     # figure senza titolo porta plotly.js a renderizzare il testo "undefined".
     if fig.layout.title and fig.layout.title.text:
         fig.update_layout(title_font=dict(color=font_col, size=14))
+
+    # I titoli dei subplot sono annotazioni: vanno ricolorati a parte.
+    for ann in fig.layout.annotations or ():
+        if ann.text and ann.font is not None and ann.xref == "x domain":
+            ann.font.color = font_col
+
     # Aggiorna tutti gli assi presenti (gestisce subplot automaticamente)
     for key in fig.layout:
         obj = getattr(fig.layout, key, None)
@@ -290,13 +345,13 @@ def applica_tema_plotly(fig: go.Figure) -> go.Figure:
         if hasattr(obj, "gridcolor"):
             obj.update(
                 gridcolor=grid_col,
-                zerolinecolor=zeroline,
+                zerolinecolor=pal["plot_zeroline"],
                 zerolinewidth=1,
                 tickfont=dict(color=font_col, size=11),
                 title_font=dict(color=font_col, size=12),
                 linecolor=grid_col,
                 showgrid=True,
-                spikecolor=spike_col,
+                spikecolor=_CURSOR_COLOR,
             )
     return fig
 
@@ -669,7 +724,12 @@ def plot_bode(
     omega_min = omega[0]
     val_esatta = mag_db[0]
     val_approx = approx_mag_db[0]
-    
+
+    # Sfondo delle etichette coerente col tema attivo
+    _label_bg = (
+        _PALETTE_DARK if plotly_template == "plotly_dark" else _PALETTE_LIGHT
+    )["plot_bg"]
+
     fig.add_annotation(
         x=np.log10(omega_min),
         y=val_esatta,
@@ -678,7 +738,7 @@ def plot_bode(
         showarrow=True, arrowhead=2, arrowcolor=_EXACT_COLOR,
         ax=-50, ay=0,
         font=dict(color=_EXACT_COLOR, size=12),
-        bgcolor="white", bordercolor=_EXACT_COLOR, borderwidth=1, borderpad=4,
+        bgcolor=_label_bg, bordercolor=_EXACT_COLOR, borderwidth=1, borderpad=4,
         xanchor="right"
     )
     fig.add_trace(go.Scatter(
@@ -695,7 +755,7 @@ def plot_bode(
         showarrow=True, arrowhead=2, arrowcolor=_APPROX_COLOR,
         ax=-50, ay=20,
         font=dict(color=_APPROX_COLOR, size=12),
-        bgcolor="white", bordercolor=_APPROX_COLOR, borderwidth=1, borderpad=4,
+        bgcolor=_label_bg, bordercolor=_APPROX_COLOR, borderwidth=1, borderpad=4,
         xanchor="right"
     )
     fig.add_trace(go.Scatter(
@@ -2103,7 +2163,7 @@ def _render_discrete_comparison(
         mag_db_disc, phase_deg_disc,
         phase_in_radians=phase_in_radians,
     )
-    fig = applica_tema_plotly(fig)
+    fig = applica_tema_plotly(fig, plotly_template == "plotly_dark")
     st.plotly_chart(fig, width="stretch", config={"displaylogo": False})
 
     # ── Poli del sistema discreto e stabilità (|p| < 1) ───────────────────
@@ -2215,13 +2275,16 @@ def main() -> None:
     """Punto di ingresso principale dell'applicazione."""
 
     with st.sidebar:
-        try:
-            st.image(logo_path, width=120)
-        except Exception:
-            pass
-        st.header("⚙️ Informazioni Sistema")
-        
-        plotly_template = "plotly_white"
+        # Qui stanno solo le impostazioni; le informazioni sul sistema
+        # vengono aggiunte più sotto da _show_sidebar_info().
+        st.header("⚙️ Impostazioni")
+
+        dark_mode = st.toggle(
+            "🌙 Modalità scura",
+            value=st.session_state.get("dark_mode", False),
+            key="dark_mode",
+        )
+        plotly_template = "plotly_dark" if dark_mode else "plotly_white"
 
         st.divider()
 
@@ -2231,19 +2294,15 @@ def main() -> None:
         if not st.session_state.get("analyzed", False):
             st.info("Inserisci i coefficienti e premi Analizza")
 
-    # Logo e Titolo in alto allineati
-    logo_col, title_col = st.columns([1, 8])
-    with logo_col:
-        try:
-            st.image(logo_path, width="stretch")
-        except Exception:
-            st.markdown("## 📈")
-    with title_col:
-        st.markdown(
-            "<h1 style='margin-top: 0px; margin-bottom: 0px;'>Analizzatore Interattivo Bode & Nyquist</h1>",
-            unsafe_allow_html=True
-        )
-    
+    # Il CSS del tema va applicato subito, prima di qualsiasi altro contenuto,
+    # per evitare che la pagina lampeggi nel tema precedente.
+    st.markdown(_DARK_CSS if dark_mode else _LIGHT_CSS, unsafe_allow_html=True)
+
+    st.markdown(
+        "<h1 style='margin-top: 0px; margin-bottom: 0px;'>Analizzatore Interattivo Bode &amp; Nyquist</h1>",
+        unsafe_allow_html=True
+    )
+
     st.markdown(
         "Inserisci il **numeratore** e il **denominatore** di G(s) qui sotto, "
         "poi premi **Analizza**."
@@ -2304,9 +2363,6 @@ def main() -> None:
         horizontal=True,
     )
     phase_in_radians = phase_unit == "rad"
-
-    
-    st.markdown(_LIGHT_CSS, unsafe_allow_html=True)
 
     analyze_clicked = st.button("🔍 Analizza", type="primary")
 
@@ -2426,7 +2482,7 @@ def main() -> None:
                 cursor_omega=st.session_state.cursor_omega,
                 margins=margins_for_plot,
             )
-            bode_fig = applica_tema_plotly(bode_fig)
+            bode_fig = applica_tema_plotly(bode_fig, dark_mode)
             st.plotly_chart(bode_fig, width="stretch", config={"displaylogo": False})
         except Exception as exc:
             logging.error(f"Bode plot error: {exc}", exc_info=True)
@@ -2524,7 +2580,7 @@ def main() -> None:
                 cursor_omega=st.session_state.cursor_omega,
                 cursor_resp=cursor_resp_ny,
             )
-            nyquist_fig = applica_tema_plotly(nyquist_fig)
+            nyquist_fig = applica_tema_plotly(nyquist_fig, dark_mode)
             st.plotly_chart(nyquist_fig, width="stretch", config={"displaylogo": False})
         except Exception as exc:
             logging.error(f"Nyquist plot error: {exc}", exc_info=True)

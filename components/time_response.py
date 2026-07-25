@@ -15,9 +15,17 @@ def render_time_response_section(info, plotly_template="plotly_white"):
         horizontal=True
     )
     
+    is_dark = plotly_template == "plotly_dark"
+    theme_layout = dict(
+        template=plotly_template,
+        paper_bgcolor="#0e1117" if is_dark else "#f8f9fc",
+        plot_bgcolor="#131720" if is_dark else "#ffffff",
+        font=dict(color="#e8e9f3" if is_dark else "#1a1a2e"),
+    )
+
     try:
         sys = info.tf
-        
+
         # Gestione Ritardo di Tempo tramite approssimazione di Padé
         if getattr(info, 'time_delay', 0.0) > 0:
             num_pade, den_pade = ctrl.pade(info.time_delay, n=5)
@@ -52,9 +60,9 @@ def render_time_response_section(info, plotly_template="plotly_white"):
                 title="Risposta al Gradino Unitario",
                 xaxis_title="Tempo [s]",
                 yaxis_title="Ampiezza",
-                template=plotly_template,
                 margin=dict(l=40, r=40, t=40, b=40),
-                height=400
+                height=400,
+                **theme_layout,
             )
             st.plotly_chart(fig_step, use_container_width=True, config={"displaylogo": False})
             
@@ -65,9 +73,9 @@ def render_time_response_section(info, plotly_template="plotly_white"):
                 title="Risposta all'Impulso",
                 xaxis_title="Tempo [s]",
                 yaxis_title="Ampiezza",
-                template=plotly_template,
                 margin=dict(l=40, r=40, t=40, b=40),
-                height=400
+                height=400,
+                **theme_layout,
             )
             st.plotly_chart(fig_imp, use_container_width=True, config={"displaylogo": False})
             
