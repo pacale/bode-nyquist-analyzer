@@ -76,7 +76,7 @@ def render_root_locus_section(info, plotly_template="plotly_white"):
         fig.add_vline(x=0, line_width=1, line_dash="dash", line_color=axis_col, opacity=0.5)
         fig.add_hline(y=0, line_width=1, line_dash="dash", line_color=axis_col, opacity=0.5)
 
-        st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
+        st.plotly_chart(fig, width="stretch", config={"displaylogo": False})
         
     except Exception as e:
         st.error(f"Errore nel calcolo del luogo delle radici: {e}")

@@ -64,7 +64,7 @@ def render_time_response_section(info, plotly_template="plotly_white"):
                 height=400,
                 **theme_layout,
             )
-            st.plotly_chart(fig_step, use_container_width=True, config={"displaylogo": False})
+            st.plotly_chart(fig_step, width="stretch", config={"displaylogo": False})
             
         with col2:
             fig_imp = go.Figure()
@@ -77,7 +77,7 @@ def render_time_response_section(info, plotly_template="plotly_white"):
                 height=400,
                 **theme_layout,
             )
-            st.plotly_chart(fig_imp, use_container_width=True, config={"displaylogo": False})
+            st.plotly_chart(fig_imp, width="stretch", config={"displaylogo": False})
             
         # Mostriamo le metriche calcolate da control
         if step_info:

@@ -803,7 +803,7 @@ def plot_bode(
         omega_pi_val = margins["omega_pc"][0] if margins["omega_pc"] else None
         pm_val = margins["PM_deg"]
         gm_val = margins["GM_dB"]
-        touches_pi = bool(margins.get("omega_pc", []))
+        touches_pi = bool(margins.get("omega_pc", [])) or margins.get("omega_pc_dc", False)
 
         # ωc: marker + segmento margine di fase
         if omega_c_val is not None:
@@ -1519,6 +1519,7 @@ def compute_stability_margins(
         "N_encirclements": 0,
         "P_unstable": 0,
         "nyquist_stable": None,
+        "omega_pc_dc": False,
     }
 
     # ── ωc: crossover di guadagno (|G| = 0 dB) con interpolazione logaritmica ──
@@ -1553,7 +1554,18 @@ def compute_stability_margins(
             np.log10(result["omega_pc"][0]), np.log10(omega), mag_dB
         ))
         result["GM_dB"] = -mag_at_wpc
-    # Se ωπ non esiste, GM = ∞ (None)
+    elif (
+        info is not None
+        and info.static_gain is not None
+        and info.static_gain < 0
+        and not time_delay
+    ):
+        # G(0) reale negativo ⇒ la fase vale ±180° già in continua: l'attraversamento
+        # è esattamente in ω = 0, che la griglia logaritmica non può contenere.
+        # Senza questo caso il margine risulterebbe ∞ invece del suo valore finito.
+        result["GM_dB"] = -20.0 * np.log10(abs(info.static_gain))
+        result["omega_pc_dc"] = True
+    # Se ωπ non esiste davvero, GM = ∞ (None)
 
     # ── Criterio di Bode: verifica applicabilità ──
     if info is not None:
@@ -1666,7 +1678,7 @@ def _show_sidebar_info(info: SystemInfo, omega: np.ndarray) -> None:
         st.sidebar.metric("Margine di Ampiezza (mA)", "∞")
         st.sidebar.caption("ωπ non esiste → mA = ∞")
 
-    touches_pi = bool(margins.get("omega_pc", []))
+    touches_pi = bool(margins.get("omega_pc", [])) or margins.get("omega_pc_dc", False)
     if touches_pi:
         if margins["PM_deg"] is not None:
             st.sidebar.metric(
@@ -1695,6 +1707,9 @@ def _show_sidebar_info(info: SystemInfo, omega: np.ndarray) -> None:
             label = "ωπ (crossover −180°)" if len(margins["omega_pc"]) == 1 \
                     else f"ωπ {i+1} (crossover −180°)"
             st.sidebar.metric(label=label, value=f"{opc:.4f} rad/s")
+    elif margins.get("omega_pc_dc"):
+        st.sidebar.metric("ωπ (crossover −180°)", "0 rad/s")
+        st.sidebar.caption("G(0) < 0 → la fase vale ±180° già in continua")
     else:
         st.sidebar.metric("ωπ (crossover −180°)", "—")
         st.sidebar.caption("La fase non incrocia −180°")
@@ -1832,8 +1847,24 @@ def discretize_tf(info, Ts_val: float, method: str) -> dict:
         num_poly_z = sympy.Poly(Cz_num, z_sym, domain='RR')
         den_poly_z = sympy.Poly(Cz_den, z_sym, domain='RR')
 
-    num_coeffs_z = [float(c) for c in num_poly_z.all_coeffs()]
-    den_coeffs_z = [float(c) for c in den_poly_z.all_coeffs()]
+    # Il metodo Matched moltiplica fattori (z − p) con p complessi: le coppie
+    # coniugate si ricompongono in coefficienti reali a meno di un residuo
+    # immaginario di arrotondamento, che float() rifiuterebbe. Si scarta il
+    # residuo solo se è trascurabile rispetto alla parte reale.
+    def _coeffs_reali(poly) -> list[float]:
+        out = []
+        for c in poly.all_coeffs():
+            cc = complex(c)
+            if abs(cc.imag) > 1e-6 * max(abs(cc.real), 1.0):
+                raise ValueError(
+                    "La discretizzazione ha prodotto coefficienti complessi: "
+                    "poli/zeri non accoppiati correttamente."
+                )
+            out.append(cc.real)
+        return out
+
+    num_coeffs_z = _coeffs_reali(num_poly_z)
+    den_coeffs_z = _coeffs_reali(den_poly_z)
 
     # Normalizza per il coefficiente leader del denominatore
     a0 = den_coeffs_z[0]
@@ -2437,14 +2468,17 @@ def main() -> None:
     col_formula, col_info = st.columns([3, 1])
     with col_formula:
         st.markdown("**G(s) analizzata:**")
-        # Problema 5: normalizza il segno in modo che il numeratore abbia leading coeff > 0
+        # Normalizza il segno sul DENOMINATORE: è la convenzione standard e
+        # lascia l'eventuale segno meno sul numeratore, dove si legge come
+        # guadagno negativo. Normalizzare sul numeratore produrrebbe invece
+        # denominatori con tutti i coefficienti negativi (es. −s²−101s−100).
         s_sym = sympy.Symbol('s')
         numer_raw, denom_raw = fraction(cancel(info.num_expr / info.den_expr))
         numer_exp = sp_expand(numer_raw)
         denom_exp = sp_expand(denom_raw)
         try:
-            leading_num = Poly(numer_exp, s_sym).all_coeffs()[0]
-            if leading_num < 0:
+            leading_den = Poly(denom_exp, s_sym).all_coeffs()[0]
+            if leading_den < 0:
                 numer_exp = sp_expand(-numer_exp)
                 denom_exp = sp_expand(-denom_exp)
         except Exception:
